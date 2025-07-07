@@ -1,0 +1,14 @@
+/node_modules
+/dist
+/build
+/coverage
+/logs
+/tmp
+/temp
+/cache
+/backup
+/old
+/archive
+/test-results
+package-lock.json
+.DS_Store

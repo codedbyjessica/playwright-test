@@ -1,0 +1,20 @@
+{
+  "name": "playwright-gtm-tracker",
+  "version": "1.0.0",
+  "description": "Playwright script to click buttons and track GTM network responses",
+  "main": "index.js",
+  "scripts": {
+    "test": "playwright test",
+    "start": "node gtm-tracker.js",
+    "install-browsers": "playwright install"
+  },
+  "keywords": ["playwright", "gtm", "automation", "testing"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+} 
