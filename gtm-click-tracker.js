@@ -1,41 +1,97 @@
+/**
+ * Google Analytics 4 (GA4) Click Event Tracker
+ * 
+ * This script automates clicking on all clickable elements on a webpage and tracks
+ * which clicks trigger Google Analytics 4 events. It generates a comprehensive HTML
+ * report showing which elements triggered GA4 events and which didn't.
+ * 
+ * Key Features:
+ * - Automatically clicks all clickable elements (links, buttons, etc.)
+ * - Tracks network requests to GA4 endpoints
+ * - Matches network events to specific clicks using timing analysis
+ * - Generates detailed HTML reports with two-column layout
+ * - Handles cookie consent banners (OneTrust)
+ * - Opens links in new tabs to prevent navigation
+ * - Deduplicates network events to prevent false matches
+ * 
+ * Usage:
+ *   node gtm-click-tracker.js <url> [--headless] [--click-pause=8000]
+ * 
+ * Example:
+ *   node gtm-click-tracker.js https://www.example.com --headless
+ * 
+ * @author AI Assistant
+ * @version 2.0
+ */
+
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
 // Configuration constants
 const CONFIG = {
-  EVENT_DELAY: 8000,
-  POLL_INTERVAL: 1000,
-  CLICK_TIMEOUT: 5000,
-  PAGE_LOAD_TIMEOUT: 10000,
-  WAIT_AFTER_CLICK: 500,
-  NETWORK_WAIT: 1000,
-  MIN_EVENT_DELAY: 50,
+  // Timing configuration
+  EVENT_DELAY: 8000,        // Interval between actions
+  CLICK_TIMEOUT: 5000,  
+  SCROLL_TIMEOUT: 1000,       // Timeout for click operations
+  PAGE_LOAD_TIMEOUT: 10000,    // Timeout for page load operations
+  WAIT_AFTER_CLICK: 100,       // Wait time after clicking before polling
+  NETWORK_WAIT: 1000,          // Wait time for network events
+  MIN_EVENT_DELAY: 0,         // Minimum delay before considering an event as triggered by a click
+  
+  // Browser configuration
   VIEWPORT: { width: 1280, height: 720 },
   USER_AGENT: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  
+  // Display configuration
   URL_PREVIEW_LENGTH: 80,
   MAX_PAYLOAD_HEIGHT: 200,
   STAT_CARD_MIN_WIDTH: 200,
+  
+  // Selectors
   SELECTORS: {
     CLICKABLE: 'a, button, input[type="submit"], input[type="button"], [role="button"], [onclick], .btn, .button',
     ONETRUST: '#onetrust-accept-btn-handler',
   },
+  
+  // Elements to exclude from clicking
   EXCLUDE_SELECTORS_FROM_CLICK: [
     '[data-gtm-destination="Exit Modal"]',
-    '#ot-sdk-btn'
+    '.exit-link',
+    '#ot-sdk-btn',
+    '.ot-link-btn',
+    '#onetrust-accept-btn-handler',
+    '#onetrust-reject-all-handler',
+    '.onetrust-close-btn-handler',
+    '.onetrust-accept-btn-handler',
+    '.ot-floating-button__open',
+    '.ot-floating-button__close',
+    '.ot-fltr-btns button',
+    '.ot-pc-footer-logo a',
+    '#ot-pc-content button',
+    '#ot-pc-content a',
+    '#ot-pc-desc a',
+    '#ot-pc-desc button',
   ],
+  
+  // Network filtering
   NETWORK_FILTERS: {
-    GA4_URL: 'https://www.google-analytics.com/g/collect',
+    GA4_URL: ['https://www.google-analytics.com/g/collect', 'https://analytics.google.com/g/collect'],
     EXCLUDE_KEYWORDS_FROM_CLICK: ['timer', 'pageview', 'page_view', 'scroll'],
     SCROLL_EVENT_KEYWORDS: ['scroll', 'scroll_depth', 'scroll_percentage']
   },
+  
+  // Event parameter mapping (camelCase keys to various possible parameter names)
   EVENT_PARAMS: {
     'eventName': ['en'],
+    'eventCategory': ['ep.event_category', 'ep.Event_Category', 'event_category', 'Event_Category'],
     'eventAction': ['ep.event_action', 'ep.Event_Action', 'event_action', 'Event_Action'],
     'eventLocation': ['ep.event_location', 'ep.Event_Location', 'event_location', 'Event_Location'],
     'eventLabel': ['ep.event_label', 'ep.Event_Label', 'event_label', 'Event_Label'],
     "linkClasses": ['ep.link_classes', 'ep.Link_Classes', 'link_classes', 'Link_Classes'],
-    "linkURL": ['ep.link_url', 'ep.Link_URL', 'link_url', 'Link_URL']
+    "linkURL": ['ep.link_url', 'ep.Link_URL', 'link_url', 'Link_URL'],
+    "linkDomain": ['ep.link_domain', 'ep.Link_Domain', 'link_domain', 'Link_Domain'],
+    "outbound": ['ep.outbound', 'ep.Outbound', 'outbound', 'Outbound']
   }
 };
 
@@ -53,6 +109,7 @@ class NetworkTracker {
     this.networkEvents = [];
     this.scrollEvents = [];
     this.clickEvents = [];
+    this.matchedNetworkEventKeys = new Set(); // Track which network events have been matched to clicks
     this.browser = null;
     this.page = null;
   }
@@ -178,45 +235,73 @@ class NetworkTracker {
     const events = [];
     
     try {
-      let eventLines = data.split(' ').filter(line => line.trim());
+      // First, split by spaces to get potential event segments
+      let eventSegments = data.split(' ').filter(segment => segment.trim());
       
-      // Handle multiple events in one line
-      if (eventLines.length === 1 && eventLines[0].includes('en=')) {
-        const parts = eventLines[0].split('en=');
-        eventLines = [];
+      // If we have multiple segments and they all contain 'en=', treat them as separate events
+      if (eventSegments.length > 1 && eventSegments.every(segment => segment.includes('en='))) {
+        // Each segment is a separate event
+        eventSegments.forEach((segment, segmentIndex) => {
+          const params = this.extractEventParamsFromData(segment, source);
+          const { relatedScroll, relatedClick } = this.findRelatedTriggers(eventTimestamp, params.eventName, networkUrl, postData);
+          const triggerAction = this.generateTriggerAction(relatedScroll, relatedClick);
+          
+          // Check if any parameter has a value
+          const hasAnyValue = Object.values(params).some(value => value && value.trim() !== '');
+          
+          if (hasAnyValue) {
+            events.push({
+              line: segmentIndex + 1,
+              ...params,
+              triggerAction,
+              rawData: segment,
+              source,
+              scrollPercentage: relatedScroll ? relatedScroll.percentage : null,
+              clickElement: relatedClick ? relatedClick.element : null
+            });
+          }
+        });
+      } else {
+        // Handle single event or complex multi-event payload
+        let eventLines = eventSegments;
         
-        for (let i = 1; i < parts.length; i++) {
-          let eventData = 'en=' + parts[i];
-          if (i < parts.length - 1) {
-            const lastSpaceIndex = eventData.lastIndexOf(' ');
-            if (lastSpaceIndex > 0) {
-              eventData = eventData.substring(0, lastSpaceIndex);
+        // If we have one line with multiple 'en=' occurrences, split it properly
+        if (eventLines.length === 1 && (eventLines[0].match(/en=/g) || []).length > 1) {
+          const line = eventLines[0];
+          const enMatches = [...line.matchAll(/en=/g)];
+          eventLines = [];
+          
+          for (let i = 0; i < enMatches.length; i++) {
+            const startIndex = enMatches[i].index;
+            const endIndex = i < enMatches.length - 1 ? enMatches[i + 1].index : line.length;
+            const eventData = line.substring(startIndex, endIndex).trim();
+            if (eventData) {
+              eventLines.push(eventData);
             }
           }
-          eventLines.push(eventData);
         }
+        
+        eventLines.forEach((line, lineIndex) => {
+          const params = this.extractEventParamsFromData(line, source);
+          const { relatedScroll, relatedClick } = this.findRelatedTriggers(eventTimestamp, params.eventName, networkUrl, postData);
+          const triggerAction = this.generateTriggerAction(relatedScroll, relatedClick);
+          
+          // Check if any parameter has a value
+          const hasAnyValue = Object.values(params).some(value => value && value.trim() !== '');
+          
+          if (hasAnyValue) {
+            events.push({
+              line: lineIndex + 1,
+              ...params,
+              triggerAction,
+              rawData: line,
+              source,
+              scrollPercentage: relatedScroll ? relatedScroll.percentage : null,
+              clickElement: relatedClick ? relatedClick.element : null
+            });
+          }
+        });
       }
-      
-      eventLines.forEach((line, lineIndex) => {
-        const params = this.extractEventParamsFromData(line, source);
-        const { relatedScroll, relatedClick } = this.findRelatedTriggers(eventTimestamp, params.eventName, networkUrl, postData);
-        const triggerAction = this.generateTriggerAction(relatedScroll, relatedClick);
-        
-        // Check if any parameter has a value
-        const hasAnyValue = Object.values(params).some(value => value && value.trim() !== '');
-        
-        if (hasAnyValue) {
-          events.push({
-            line: lineIndex + 1,
-            ...params,
-            triggerAction,
-            rawData: line,
-            source,
-            scrollPercentage: relatedScroll ? relatedScroll.percentage : null,
-            clickElement: relatedClick ? relatedClick.element : null
-          });
-        }
-      });
     } catch (e) {
       console.log('⚠️  Error parsing data:', e.message);
     }
@@ -264,10 +349,6 @@ class NetworkTracker {
   generateEventHTML(event, extractedEvents, isScrollSection = false) {
     if (extractedEvents.length === 0) return '';
     
-    const isRequest = event.type === 'request';
-    const itemClass = isRequest ? 'request-item' : 'response-item';
-    const typeLabel = isRequest ? 'REQUEST' : 'RESPONSE';
-    const typeClass = isRequest ? 'request-type' : 'response-type';
     const firstEvent = extractedEvents[0];
     
     const triggerBadge = firstEvent.triggerAction?.includes('click')
@@ -299,9 +380,9 @@ class NetworkTracker {
     }).join('');
     
     return `
-      <div class="event-item ${itemClass}" data-url="${event.url}" data-type="${event.type}" data-method="${event.method || ''}">
+      <div class="event-item request-item" data-url="${event.url}" data-type="${event.type}" data-method="${event.method || ''}">
         <div class="event-header">
-          <span class="event-type ${typeClass}">${typeLabel}</span>
+          <span class="event-type request-type">REQUEST</span>
           ${triggerBadge}
           ${firstEvent.eventName ? `<span class="event-name">${firstEvent.eventName}</span>` : ''}
           ${elementInfo}
@@ -329,17 +410,11 @@ class NetworkTracker {
             <br><strong>Extracted Events (${extractedEvents.length}):</strong>
             ${eventDetails}
           ` : ''}
-          ${!event.postData && event.url.includes(CONFIG.NETWORK_FILTERS.GA4_URL) && extractedEvents.length === 0 ? `
+          ${!event.postData && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url)) && extractedEvents.length === 0 ? `
             <br><strong>URL Parameters:</strong> ${event.url}
           ` : ''}
           ${event.requestUrl && event.requestUrl !== event.url ? `<br>Request URL: ${event.requestUrl}` : ''}
         </div>
-        ${event.body && event.body !== '[Unable to read response body]' ? `
-          <div class="payload">
-            <div class="payload-title">Response Body:</div>
-            ${event.body}
-          </div>
-        ` : ''}
       </div>
     `;
   }
@@ -441,7 +516,7 @@ class NetworkTracker {
                       <br><strong>Extracted Events (${extractedEvents.length}):</strong>
                       ${eventDetails}
                     ` : ''}
-                    ${!event.postData && event.url.includes(CONFIG.NETWORK_FILTERS.GA4_URL) && extractedEvents.length === 0 ? `
+                    ${!event.postData && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url)) && extractedEvents.length === 0 ? `
                       <br><strong>URL Parameters:</strong> ${event.url}
                     ` : ''}
                     ${event.requestUrl && event.requestUrl !== event.url ? `<br>Request URL: ${event.requestUrl}` : ''}
@@ -471,7 +546,7 @@ class NetworkTracker {
               extractedEvents = this.parseEventsFromData(event.postData, event.timestamp, 'POST', event.url, event.postData);
             }
             
-            if (extractedEvents.length === 0 && event.url.includes(CONFIG.NETWORK_FILTERS.GA4_URL)) {
+            if (extractedEvents.length === 0 && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url))) {
               extractedEvents = this.parseEventsFromData(event.url, event.timestamp, 'URL', event.url, event.postData || '');
             }
             
@@ -496,6 +571,31 @@ class NetworkTracker {
           selector = `${el.tagName.toLowerCase()}.${classes}`;
         }
       }
+
+      // Generate a CSS selector for the parent element (if any)
+      let parentSelector = null;
+      if (el.parentElement) {
+        let parent = el.parentElement;
+        parentSelector = parent.tagName.toLowerCase();
+        if (parent.id) {
+          parentSelector = `#${parent.id}`;
+        } else if (parent.className) {
+          const parentClasses = parent.className.split(' ').filter(c => c.trim()).join('.');
+          if (parentClasses) {
+            parentSelector = `${parent.tagName.toLowerCase()}.${parentClasses}`;
+          }
+        }
+      }
+      
+      // Collect all ARIA attributes
+      const ariaAttributes = {};
+      const allAttributes = el.attributes;
+      for (let i = 0; i < allAttributes.length; i++) {
+        const attr = allAttributes[i];
+        if (attr.name.startsWith('aria-')) {
+          ariaAttributes[attr.name] = attr.value;
+        }
+      }
       
       return {
         tagName: el.tagName.toLowerCase(),
@@ -503,18 +603,26 @@ class NetworkTracker {
         href: el.href || '',
         className: el.className || '',
         id: el.id || '',
-        selector: selector
+        selector: selector,
+        parentSelector: parentSelector,
+        ariaAttributes: ariaAttributes
       };
     });
   }
 
   // Helper function to handle link clicks
   async handleLinkClick(element, elementInfo) {
-    console.log(`🔗 Link detected, forcing it to open in new tab: ${elementInfo.href}`);
+    console.log(`🔗 Link detected, opening in new tab: ${elementInfo.href}`);
     console.log("elementInfo", elementInfo);
     
-    // Try middle-click first (which opens in new tab)
-    await element.click({ button: 'middle', timeout: CONFIG.CLICK_TIMEOUT });
+    // Use Ctrl+Click (or Cmd+Click on Mac) to open link in new tab without modifying the page
+    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    
+    await element.click({ 
+      button: 'left', 
+      modifiers: [modifier],
+      timeout: CONFIG.CLICK_TIMEOUT 
+    });
     
     // Wait a moment for the new tab to open
     await this.page.waitForTimeout(CONFIG.WAIT_AFTER_CLICK);
@@ -524,85 +632,81 @@ class NetworkTracker {
     const newPage = pages.find(page => page !== this.page);
     
     if (newPage) {
-      console.log(`📄 New tab opened: ${newPage.url()}`);
-      
-      // Close the new tab immediately (we don't care about its network events)
+      console.log(`📄 New tab opened, closing it and returning to original page`);
       await newPage.close();
-      console.log(`📄 New tab closed`);
-    } else {
-      // If middle-click didn't work, try programmatically opening in new tab
-      console.log(`⚠️ Middle-click didn't open new tab, trying programmatic approach`);
-      
-      try {
-        // Open the URL in a new tab programmatically
-        const newPage = await this.page.context().newPage();
-        await newPage.goto(elementInfo.href, { waitUntil: 'domcontentloaded', timeout: 5000 });
-        console.log(`📄 Programmatically opened new tab: ${newPage.url()}`);
-        
-        // Close the new tab immediately (we don't care about its network events)
-        await newPage.close();
-        console.log(`📄 Programmatically opened tab closed`);
-        
-      } catch (programmaticError) {
-        console.log(`❌ Failed to force new tab: ${programmaticError.message}`);
-        // Fall back to regular click if all else fails
-        await element.click({ timeout: 5000 });
-      }
     }
+    
+    // Ensure we're back on the original page
+    await this.page.bringToFront();
   }
 
-  // Helper function to poll for network events
-  async pollForNetworkEvents(clickStartTime, networkEventsBeforeClick, elementInfo) {
-    console.log(`⏳ Polling for network events within ${CONFIG.MIN_EVENT_DELAY/1000}-${CONFIG.EVENT_DELAY/1000}s window after clicking "${elementInfo.textContent}"...`);
+  // Helper function to wait for network events after a click
+  async waitForNetworkEvents(clickStartTime, elementInfo) {
+    console.log(`⏳ Waiting ${CONFIG.EVENT_DELAY/1000}s for network events after clicking "${elementInfo.textContent}"...`);
     
-    const newNetworkEvents = [];
-    const maxPolls = Math.floor(CONFIG.EVENT_DELAY / CONFIG.POLL_INTERVAL);
+    // Wait the full event delay time
+    await this.page.waitForTimeout(CONFIG.EVENT_DELAY);
     
-    for (let poll = 0; poll < maxPolls; poll++) {
-      // Wait for the poll interval
-      if (poll > 0) {
-        await this.page.waitForTimeout(CONFIG.POLL_INTERVAL);
-      }
+    // Find all network events that occurred within the time window
+    const newNetworkEvents = this.networkEvents.filter(networkEvent => {
+      const timeAfterClick = networkEvent.timestamp - clickStartTime;
+      const eventKey = `${networkEvent.timestamp}-${networkEvent.url}`;
       
-      const currentTime = new Date().getTime();
-      const timeSinceClick = currentTime - clickStartTime;
+      // Only include events that:
+      // 1. Occurred after the click (positive timeAfterClick)
+      // 2. Are within our time window
+      // 3. Haven't been matched to any previous click
+      return timeAfterClick >= CONFIG.MIN_EVENT_DELAY && 
+             timeAfterClick <= CONFIG.EVENT_DELAY &&
+             !this.matchedNetworkEventKeys.has(eventKey);
+    });
+    
+    // Mark these events as matched to prevent them from being matched to future clicks
+    newNetworkEvents.forEach(event => {
+      const eventKey = `${event.timestamp}-${event.url}`;
+      this.matchedNetworkEventKeys.add(eventKey);
+    });
+    
+    // Log details of found network events
+    if (newNetworkEvents.length > 0) {
+      console.log(`📡 Found ${newNetworkEvents.length} network events within ${CONFIG.MIN_EVENT_DELAY/1000}-${CONFIG.EVENT_DELAY/1000}s window after clicking "${elementInfo.textContent}"`);
       
-      // Check for new network events that occurred since the last check
-      const latestNetworkEvents = this.networkEvents.slice(networkEventsBeforeClick + newNetworkEvents.length);
+      // Count GA4 vs other events
+      const ga4Events = newNetworkEvents.filter(event => 
+        CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url))
+      );
+      const otherEvents = newNetworkEvents.length - ga4Events.length;
       
-      // Filter events that occurred within the time window and haven't been captured yet
-      const freshEvents = latestNetworkEvents.filter(networkEvent => {
-        const timeAfterClick = networkEvent.timestamp - clickStartTime;
-        return timeAfterClick >= CONFIG.MIN_EVENT_DELAY && timeAfterClick <= CONFIG.EVENT_DELAY;
-      });
+      console.log(`  🔵 GA4 events: ${ga4Events.length}`);
+      console.log(`  📡 Other events: ${otherEvents.length}`);
       
-      if (freshEvents.length > 0) {
-        console.log(`  📡 Poll ${poll + 1}: Found ${freshEvents.length} new events at ${timeSinceClick}ms after click`);
-        newNetworkEvents.push(...freshEvents);
-        
-        // Log details of new network events
-        freshEvents.forEach((event, eventIdx) => {
-          if (event.type === 'request') {
-            let extractedEvents = [];
-            if (event.postData) {
-              extractedEvents = this.parseEventsFromData(event.postData, event.timestamp, 'POST', event.url, event.postData);
-            }
-            if (extractedEvents.length === 0 && event.url.includes(CONFIG.NETWORK_FILTERS.GA4_URL)) {
-              extractedEvents = this.parseEventsFromData(event.url, event.timestamp, 'URL', event.url, event.postData || '');
-            }
-            
+      newNetworkEvents.forEach((event, eventIdx) => {
+        if (event.type === 'request') {
+          let extractedEvents = [];
+          if (event.postData) {
+            extractedEvents = this.parseEventsFromData(event.postData, event.timestamp, 'POST', event.url, event.postData);
+          }
+          if (extractedEvents.length === 0 && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url))) {
+            extractedEvents = this.parseEventsFromData(event.url, event.timestamp, 'URL', event.url, event.postData || '');
+          }
+          
+          if (extractedEvents.length > 0) {
             extractedEvents.forEach(evt => {
               const timeAfterClick = event.timestamp - clickStartTime;
-              console.log(`    📡 Event: ${evt.eventName} - ${evt.eventAction} - ${evt.eventLabel} (${timeAfterClick}ms after click)`);
+              console.log(`    🔵 GA4 Event: ${evt.eventName} - ${evt.eventAction} - ${evt.eventLabel} (${timeAfterClick}ms after click)`);
             });
+          } else if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url))) {
+            const timeAfterClick = event.timestamp - clickStartTime;
+            console.log(`    🔵 GA4 Request: ${event.url} (${timeAfterClick}ms after click)`);
+          } else {
+            const timeAfterClick = event.timestamp - clickStartTime;
+            console.log(`    📡 Other Request: ${event.method} ${event.url} (${timeAfterClick}ms after click)`);
           }
-        });
-      } else {
-        console.log(`  📡 Poll ${poll + 1}: No new events at ${timeSinceClick}ms after click`);
-      }
+        }
+      });
+    } else {
+      console.log(`📡 No new network events found within ${CONFIG.MIN_EVENT_DELAY/1000}-${CONFIG.EVENT_DELAY/1000}s window after clicking "${elementInfo.textContent}"`);
     }
-    
-    console.log(`📊 Total: Found ${newNetworkEvents.length} network events within ${CONFIG.MIN_EVENT_DELAY/1000}-${CONFIG.EVENT_DELAY/1000}s window after clicking "${elementInfo.textContent}"`);
     
     return newNetworkEvents;
   }
@@ -668,50 +772,46 @@ class NetworkTracker {
     this.page.on('request', request => {
       const url = request.url();
       // Only record GA4 collect requests
-      if (url.includes(CONFIG.NETWORK_FILTERS.GA4_URL)) {
+      if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => url.includes(ga4Url))) {
         const timestamp = new Date().getTime();
         const extractedParams = this.extractEventParams(request.postData());
         
-        this.networkEvents.push({
-          type: 'request',
-          timestamp,
-          url: request.url(),
-          method: request.method(),
-          headers: request.headers(),
-          postData: request.postData(),
-          ...extractedParams
-        });
+        // Check if we've already recorded this exact request
+        // We need to be more careful about duplicates to avoid missing multiple events in the same request
+        // const isDuplicate = this.networkEvents.some(event => 
+        //   event.url === request.url() && 
+        //   event.postData === request.postData() &&
+        //   Math.abs(event.timestamp - timestamp) < 100 // Within 100ms (more precise)
+        // );
+        
+        // if (!isDuplicate) {
+          console.log(`📡 Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
+          this.networkEvents.push({
+            type: 'request',
+            timestamp,
+            url: request.url(),
+            method: request.method(),
+            headers: request.headers(),
+            postData: request.postData(),
+            ...extractedParams
+          });
+        // } else {
+        //   console.log(`⚠️ Skipping duplicate network request: ${request.url()}`);
+        // }
       }
     });
 
-    this.page.on('response', async response => {
-      const url = response.url();
-      // Only record GA4 collect responses
-      if (url.includes(CONFIG.NETWORK_FILTERS.GA4_URL)) {
-        const timestamp = new Date().getTime();
-        const request = response.request();
-        const extractedParams = this.extractEventParams(request.postData());
-        
-        let body = '';
-        try {
-          body = await response.text();
-        } catch (e) {
-          body = '[Unable to read response body]';
-        }
-        
-        this.networkEvents.push({
-          type: 'response',
-          timestamp,
-          url: response.url(),
-          status: response.status(),
-          method: request.method(),
-          headers: response.headers(),
-          body: body,
-          requestUrl: request.url(),
-          ...extractedParams
-        });
-      }
-    });
+    // Remove response event recording since we only need requests
+    // this.page.on('response', async response => { ... });
+  }
+
+  async dismissPantheon() {
+    const dismissBtn = await this.page.$(".pds-button");
+    if (dismissBtn) {
+      await dismissBtn.click();
+      console.log('✅ Clicked Pantheon dismiss button');
+      await this.page.waitForTimeout(CONFIG.NETWORK_WAIT);
+    }
   }
 
   async handleOneTrust() {
@@ -808,20 +908,13 @@ class NetworkTracker {
             await element.click({ timeout: CONFIG.CLICK_TIMEOUT });
           }
           
-          // Poll for network events multiple times within the time window
-          const newNetworkEvents = await this.pollForNetworkEvents(clickStartTime, networkEventsBeforeClick, elementInfo);
+          // Wait for network events within the time window
+          const newNetworkEvents = await this.waitForNetworkEvents(clickStartTime, elementInfo);
           
           // Update the click event with network event info
           const currentClickEvent = this.clickEvents[this.clickEvents.length - 1];
           currentClickEvent.networkEventsAfter = this.networkEvents.length;
           currentClickEvent.matchedNetworkEvents = newNetworkEvents;
-          
-          // Wait additional time before next click to ensure clean separation
-          const remainingWaitTime = Math.max(0, CONFIG.EVENT_DELAY - (new Date().getTime() - clickStartTime));
-          if (remainingWaitTime > 0) {
-            console.log(`⏳ Waiting additional ${remainingWaitTime}ms before next click...`);
-            await this.page.waitForTimeout(remainingWaitTime);
-          }
           
         } catch (clickError) {
           await this.recordFailedClick(clickableElements[i], clickError, i);
@@ -870,7 +963,7 @@ class NetworkTracker {
       }, scrollY);
       
       // Wait a bit between scrolls to capture any lazy-loaded content
-      await this.page.waitForTimeout(CONFIG.POLL_INTERVAL);
+      await this.page.waitForTimeout(CONFIG.SCROLL_TIMEOUT);
     }
     
     // Scroll back to top
@@ -903,12 +996,15 @@ class NetworkTracker {
       
       console.log(`⏳ Waiting ${CONFIG.PAGE_LOAD_TIMEOUT}ms for page to load...`);
       await this.page.waitForTimeout(CONFIG.PAGE_LOAD_TIMEOUT);
+
+      // Dismiss Pantheon
+      await this.dismissPantheon();
       
       // Handle OneTrust
       await this.handleOneTrust();
       
       // Scroll the page
-      await this.scrollPage();
+      // await this.scrollPage();
 
       // Wait longer between scroll and click to ensure all scroll events are captured
       console.log(`⏳ Waiting ${CONFIG.EVENT_DELAY/1000} seconds between scroll and click actions...`);
@@ -962,16 +1058,181 @@ class NetworkTracker {
     }
   }
 
+  async generateCSVReport(testResultsDir, reportFilename) {
+    console.log('\n📊 === GENERATING CSV REPORT ===');
+    
+    const csvRows = [];
+    
+    // Add CSV header - simplified columns
+    csvRows.push([
+      'Click Order',
+      'Element Type',
+      'Element Text',
+      'Element Href',
+      'Element Selector',
+      'Click Time',
+      'Status',
+      'GA4 Event Count',
+      'Primary GA4 Event Name',
+      'Primary GA4 Event Category',
+      'Primary GA4 Event Action',
+      'Primary GA4 Event Label',
+      'Time After Click (ms)',
+      'Network URL'
+    ]);
+    
+    // Add click events data
+    this.clickEvents
+      .filter(click => click.success === true)
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .forEach((click, idx) => {
+        const hasMatchingEvent = click.matchedNetworkEvents && click.matchedNetworkEvents.length > 0;
+        
+        // Get primary GA4 event data (first event)
+        let primaryEventName = '';
+        let primaryEventCategory = '';
+        let primaryEventAction = '';
+        let primaryEventLabel = '';
+        let timeAfterClick = '';
+        let networkURL = '';
+        
+        if (hasMatchingEvent && click.matchedNetworkEvents.length > 0) {
+          const firstNetworkEvent = click.matchedNetworkEvents[0];
+          let extractedEvents = [];
+          
+          if (firstNetworkEvent.postData) {
+            extractedEvents = this.parseEventsFromData(firstNetworkEvent.postData, firstNetworkEvent.timestamp, 'POST', firstNetworkEvent.url, firstNetworkEvent.postData);
+          }
+          if (extractedEvents.length === 0 && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => firstNetworkEvent.url.includes(ga4Url))) {
+            extractedEvents = this.parseEventsFromData(firstNetworkEvent.url, firstNetworkEvent.timestamp, 'URL', firstNetworkEvent.url, firstNetworkEvent.postData || '');
+          }
+          
+          if (extractedEvents.length > 0) {
+            const firstEvent = extractedEvents[0];
+            primaryEventName = firstEvent.eventName || '';
+            primaryEventCategory = firstEvent.eventCategory || '';
+            primaryEventAction = firstEvent.eventAction || '';
+            primaryEventLabel = firstEvent.eventLabel || '';
+            timeAfterClick = firstNetworkEvent.timestamp - click.timestamp;
+            networkURL = firstNetworkEvent.url;
+          }
+        }
+        
+        // Clean and escape CSV values
+        const cleanValue = (value) => {
+          if (value === null || value === undefined) return '';
+          const stringValue = String(value).trim();
+          if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes('\r')) {
+            return `"${stringValue.replace(/"/g, '""')}"`;
+          }
+          return stringValue;
+        };
+        
+        csvRows.push([
+          idx + 1, // Click Order
+          cleanValue(click.element.tagName || ''), // Element Type
+          cleanValue(click.element.textContent || ''), // Element Text
+          cleanValue(click.element.href || ''), // Element Href
+          cleanValue(click.element.selector || ''), // Element Selector
+          new Date(click.timestamp).toLocaleTimeString(), // Click Time
+          hasMatchingEvent ? 'TRIGGERED GA4' : 'NO GA4', // Status
+          hasMatchingEvent ? click.matchedNetworkEvents.length : 0, // GA4 Event Count
+          cleanValue(primaryEventName), // Primary GA4 Event Name
+          cleanValue(primaryEventCategory), // Primary GA4 Event Category
+          cleanValue(primaryEventAction), // Primary GA4 Event Action
+          cleanValue(primaryEventLabel), // Primary GA4 Event Label
+          timeAfterClick, // Time After Click (ms)
+          cleanValue(networkURL) // Network URL
+        ]);
+      });
+    
+    // Write CSV file
+    const csvContent = csvRows.map(row => row.join(',')).join('\n');
+    const csvPath = path.join(testResultsDir, `${reportFilename}.csv`);
+    fs.writeFileSync(csvPath, csvContent);
+    console.log(`📊 CSV report saved to ${csvPath}`);
+  }
+
+  async generateJSONReport(testResultsDir, reportFilename) {
+    console.log('\n📊 === GENERATING JSON REPORT FOR ARD ANALYSIS ===');
+    
+    // Extract all network events with their parsed event data
+    const networkEventsForAnalysis = [];
+    
+    this.networkEvents.filter(event => event.type === 'request').forEach((event, idx) => {
+      let extractedEvents = [];
+      
+      if (event.postData) {
+        extractedEvents = this.parseEventsFromData(event.postData, event.timestamp, 'POST', event.url, event.postData);
+      }
+      
+      if (extractedEvents.length === 0 && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url))) {
+        extractedEvents = this.parseEventsFromData(event.url, event.timestamp, 'URL', event.url, event.postData || '');
+      }
+      
+      if (extractedEvents.length > 0) {
+        extractedEvents.forEach(extractedEvent => {
+          networkEventsForAnalysis.push({
+            networkEventIndex: idx,
+            timestamp: event.timestamp,
+            url: event.url,
+            method: event.method,
+            postData: event.postData,
+            eventName: extractedEvent.eventName,
+            eventCategory: extractedEvent.eventCategory,
+            eventAction: extractedEvent.eventAction,
+            eventLabel: extractedEvent.eventLabel,
+            eventLocation: extractedEvent.eventLocation,
+            linkClasses: extractedEvent.linkClasses,
+            linkURL: extractedEvent.linkURL,
+            linkDomain: extractedEvent.linkDomain,
+            outbound: extractedEvent.outbound,
+            source: extractedEvent.source,
+            rawData: extractedEvent.rawData,
+            line: extractedEvent.line
+          });
+        });
+      }
+    });
+    
+    // Create the JSON report data
+    const jsonReport = {
+      metadata: {
+        url: this.options.url,
+        timestamp: new Date().toISOString(),
+        totalNetworkEvents: this.networkEvents.length,
+        totalExtractedEvents: networkEventsForAnalysis.length,
+        totalClicks: this.clickEvents.length,
+        successfulClicks: this.clickEvents.filter(click => click.success === true).length,
+        failedClicks: this.clickEvents.filter(click => click.success === false).length
+      },
+      networkEvents: networkEventsForAnalysis,
+      clickEvents: this.clickEvents.map(click => ({
+        timestamp: click.timestamp,
+        element: click.element,
+        success: click.success,
+        error: click.error,
+        matchedNetworkEvents: click.matchedNetworkEvents ? click.matchedNetworkEvents.length : 0
+      }))
+    };
+    
+    // Write JSON file
+    const jsonPath = path.join(testResultsDir, `${reportFilename}.json`);
+    fs.writeFileSync(jsonPath, JSON.stringify(jsonReport, null, 2));
+    console.log(`📊 JSON report saved to ${jsonPath}`);
+    console.log(`📊 Total extracted events for ARD analysis: ${networkEventsForAnalysis.length}`);
+  }
+
   async generateHTMLReport() {
     console.log('\n📋 === NETWORK EVENTS REPORT ===');
     
     // Filter and categorize events
     const requests = this.networkEvents.filter(e => e.type === 'request');
-    const responses = this.networkEvents.filter(e => e.type === 'response');
+    // const responses = this.networkEvents.filter(e => e.type === 'response'); // No longer recording responses
     
     console.log(`Total network events: ${this.networkEvents.length}`);
     console.log(`Requests: ${requests.length}`);
-    console.log(`Responses: ${responses.length}`);
+    // console.log(`Responses: ${responses.length}`); // No longer recording responses
     
     // Generate filename
     const siteUrl = new URL(this.options.url).hostname.replace(/\./g, '-');
@@ -984,13 +1245,19 @@ class NetworkTracker {
       fs.mkdirSync(testResultsDir, { recursive: true });
     }
     
+    // Generate CSV report
+    await this.generateCSVReport(testResultsDir, reportFilename);
+
+    // Generate JSON report for ARD analysis
+    await this.generateJSONReport(testResultsDir, reportFilename);
+
     const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Network Events Report - ${this.options.url}</title>
+    <title>Auto GA Checker Report - ${this.options.url}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -1058,7 +1325,6 @@ class NetworkTracker {
             border-left: 4px solid #667eea; 
         }
         .request-item { border-left-color: #2196f3; }
-        .response-item { border-left-color: #4caf50; }
         .event-header { 
             display: flex; 
             justify-content: space-between; 
@@ -1074,7 +1340,6 @@ class NetworkTracker {
             font-weight: bold; 
         }
         .request-type { background: #2196f3; }
-        .response-type { background: #4caf50; }
         .event-name {
             background: linear-gradient(135deg, #667eea, #764ba2);
             color: white;
@@ -1195,14 +1460,51 @@ class NetworkTracker {
             background-color: #fff3cd;
             border-left: 4px solid #ffc107;
         }
+        .click-details-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        .click-basic-info {
+            flex: 1;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        .click-detailed-info {
+            flex: 1;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        .click-info-section {
+            margin-bottom: 10px;
+        }
+        .click-info-section:last-child {
+            margin-bottom: 0;
+        }
+        .click-info-label {
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 5px;
+        }
+        .click-info-value {
+            color: #333;
+            font-family: monospace;
+            background: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🌐 Network Events Report</h1>
-            <p>Complete network activity captured during page load and scroll</p>
-            <p><strong>URL Analyzed:</strong> <a href="${this.options.url}" target="_blank" style="color: #fff; text-decoration: underline;">${this.options.url}</a></p>
+            <h1>🌐 Auto GA Checker Report</h1>
+            <h2><a href="${this.options.url}" target="_blank" style="color: #fff; text-decoration: underline;">${this.options.url}</a></h2>
         </div>
         
         <div class="stats">
@@ -1214,19 +1516,16 @@ class NetworkTracker {
                 <div class="stat-number">${new Set(requests.map(e => e.url)).size}</div>
                 <div class="stat-label">Unique URLs</div>
             </div>
-
         </div>
 
         <div class="section">
-            <h2>📡 Network Events (Requests Only)</h2>
             
             ${this.generateEventsSectionHTML('pageview', 'Pageview Events', '📄')}
             ${this.generateEventsSectionHTML('scroll', 'Scroll-Triggered Events', '📜')}
-            ${this.generateEventsSectionHTML('unmatched', 'Unmatched Network Events', '❓')}
             
             <!-- All Successful Click Events Section -->
             <div class="subsection">
-                <h3>✅ All Successful Click Events (Chronological Order)</h3>
+                <h3>✅ All Successful Click Events (${this.clickEvents.filter(click => click.success === true).length})</h3>
                 <div id="successfulClicksContainer">
                     ${this.clickEvents
                         .filter(click => click.success === true)
@@ -1244,11 +1543,11 @@ class NetworkTracker {
                                     if (networkEvent.postData) {
                                         extractedEvents = this.parseEventsFromData(networkEvent.postData, networkEvent.timestamp, 'POST', networkEvent.url, networkEvent.postData);
                                     }
-                                    if (extractedEvents.length === 0 && networkEvent.url.includes(CONFIG.NETWORK_FILTERS.GA4_URL)) {
+                                    if (extractedEvents.length === 0 && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => networkEvent.url.includes(ga4Url))) {
                                         extractedEvents = this.parseEventsFromData(networkEvent.url, networkEvent.timestamp, 'URL', networkEvent.url, networkEvent.postData || '');
                                     }
                                     
-                                    extractedEvents.forEach(evt => {
+                                    extractedEvents.forEach((evt, extractedEventIdx) => {
                                         // Dynamically generate parameter HTML based on CONFIG.EVENT_PARAMS
                                         const parameterHtml = Object.entries(CONFIG.EVENT_PARAMS).map(([paramKey, paramNames]) => {
                                             const value = evt[paramKey];
@@ -1261,7 +1560,7 @@ class NetworkTracker {
                                         
                                         matchingEventDetails += `
                                             <div style="margin-top: 10px; padding: 10px; background: #e8f5e8; border-radius: 5px; border-left: 3px solid #4caf50;">
-                                                <strong>✅ GA4 Event ${eventIdx + 1} (Direct Match):</strong><br>
+                                                <strong>✅ GA4 Event ${eventIdx + 1}.${extractedEventIdx + 1} (Direct Match):</strong><br>
                                                 ${parameterHtml}
                                                 <div><strong>Network Event Time:</strong> ${new Date(networkEvent.timestamp).toLocaleTimeString()}</div>
                                                 <div><strong>Time After Click:</strong> ${networkEvent.timestamp - click.timestamp}ms</div>
@@ -1286,7 +1585,7 @@ class NetworkTracker {
                             
                             const statusMessage = hasMatchingEvent 
                                 ? `<div style="margin-top: 10px; padding: 10px; background: #e8f5e8; border-radius: 5px; border-left: 3px solid #4caf50;">
-                                     <strong>✅ This click successfully triggered ${click.matchedNetworkEvents.length} Google Analytics event(s)</strong>
+                                     <strong>✅ This click successfully triggered ${click.matchedNetworkEvents ? click.matchedNetworkEvents.length : 0} Google Analytics event(s)</strong>
                                    </div>`
                                 : `<div style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 5px; border-left: 3px solid #ffc107;">
                                      <strong>⚠️ This click did not trigger any Google Analytics events</strong>
@@ -1298,30 +1597,55 @@ class NetworkTracker {
                                         <span style="background: #2196f3; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 8px;">#${idx + 1}</span>
                                         ${statusBadge}
                                         <span style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">click</span>
-                                        <span style="background: #e3f2fd; color: #1976d2; padding: 4px 8px; border-radius: 4px; font-size: 0.7em; margin-right: 8px; font-family: monospace;">${click.element.selector}${click.element.id ? ` (ID: ${click.element.id})` : ''}${click.element.className ? ` (Classes: ${click.element.className})` : ''}${click.element.textContent ? ` (Text: "${click.element.textContent}")` : ''}</span>
+                                        <span style="background: #e3f2fd; color: #1976d2; padding: 4px 8px; border-radius: 4px; font-size: 0.7em; margin-right: 8px; font-family: monospace;">${click.element.selector}${click.element.id ? ` (ID: ${click.element.id})` : ''}${click.element.className ? ` (Classes: ${click.element.className})` : ''}${Object.keys(click.element.ariaAttributes || {}).length > 0 ? ` (ARIA: ${Object.keys(click.element.ariaAttributes).join(', ')})` : ''}${click.element.textContent ? ` (Text: "${click.element.textContent}")` : ''}</span>
                                         <span class="event-time">${new Date(click.timestamp).toLocaleTimeString()}</span>
                                     </div>
-                                    <div class="details">
-                                        <div><strong>Click Order:</strong> ${idx + 1}</div>
-                                        <div><strong>Element:</strong> ${click.element.tagName}</div>
-                                        ${click.element.textContent ? `<div><strong>Text:</strong> "${click.element.textContent}"</div>` : ''}
-                                        ${click.element.href ? `<div><strong>Href:</strong> ${click.element.href}</div>` : ''}
-                                        ${click.element.id ? `<div><strong>ID:</strong> ${click.element.id}</div>` : ''}
-                                        ${click.element.className ? `<div><strong>Classes:</strong> ${click.element.className}</div>` : ''}
-                                        <div><strong>Selector:</strong> ${click.element.selector}</div>
-                                        <div><strong>Click Time:</strong> ${new Date(click.timestamp).toLocaleTimeString()}</div>
-                                        <div><strong>Network Events Before:</strong> ${click.networkEventsBefore}</div>
-                                        <div><strong>Network Events After:</strong> ${click.networkEventsAfter}</div>
-                                        <div><strong>New Network Events:</strong> ${click.matchedNetworkEvents ? click.matchedNetworkEvents.length : 0}</div>
-                                        <div><strong>Status:</strong> ${hasMatchingEvent ? 'Successful (triggered GA4 events)' : 'Successful (no GA4 events)'}</div>
-                                        ${statusMessage}
-                                        ${matchingEventDetails}
+                                    <div class="click-details-container">
+                                        <div class="click-basic-info">
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Element:</span>
+                                                <span class="click-info-value">${click.element.tagName}</span>
+                                            </div>
+                                            ${click.element.textContent ? `<div class="click-info-section"><span class="click-info-label">Text:</span><span class="click-info-value">"${click.element.textContent}"</span></div>` : ''}
+                                            ${click.element.href ? `<div class="click-info-section"><span class="click-info-label">Href:</span><span class="click-info-value">${click.element.href}</span></div>` : ''}
+                                            ${click.element.id ? `<div class="click-info-section"><span class="click-info-label">ID:</span><span class="click-info-value">${click.element.id}</span></div>` : ''}
+                                            ${click.element.className ? `<div class="click-info-section"><span class="click-info-label">Classes:</span><span class="click-info-value">${click.element.className}</span></div>` : ''}
+                                            ${Object.keys(click.element.ariaAttributes || {}).length > 0 ? `
+                                                <div class="click-info-section">
+                                                    <span class="click-info-label">ARIA Attributes:</span>
+                                                    <div class="click-info-value" style="max-height: 150px; overflow-y: auto;">
+                                                        ${Object.entries(click.element.ariaAttributes).map(([key, value]) => 
+                                                            `<div style="margin-bottom: 4px;"><strong>${key}:</strong> ${value}</div>`
+                                                        ).join('')}
+                                                    </div>
+                                                </div>
+                                            ` : ''}
+                                            ${click.element.parentSelector ? `<div class="click-info-section"><span class="click-info-label">Parent Selector:</span><span class="click-info-value">${click.element.parentSelector}</span></div>` : ''}
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Selector:</span>
+                                                <span class="click-info-value">${click.element.selector}</span>
+                                            </div>
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Click Time:</span>
+                                                <span class="click-info-value">${new Date(click.timestamp).toLocaleTimeString()}</span>
+                                            </div>
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Status:</span>
+                                                <span class="click-info-value">${hasMatchingEvent ? 'Successful (triggered GA4 events)' : 'Successful (no GA4 events)'}</span>
+                                            </div>
+                                            ${statusMessage}
+                                        </div>
+                                        <div class="click-detailed-info">
+                                            ${matchingEventDetails}
+                                        </div>
                                     </div>
                                 </div>
                             `;
                         }).join('')}
                 </div>
             </div>
+
+            ${this.generateEventsSectionHTML('unmatched', 'Unmatched Network Events', '❓')}
             
             <!-- Unmatched Click Events Section -->
             <div class="subsection">
@@ -1329,6 +1653,16 @@ class NetworkTracker {
                 <div id="unmatchedClicksContainer">
                     ${this.clickEvents
                         .filter(click => click.success === false)
+                        .filter(failedClick => {
+                            // Check if there's an identical successful click for this element
+                            const hasIdenticalSuccessful = this.clickEvents.some(successfulClick => 
+                                successfulClick.success === true &&
+                                successfulClick.element.selector === failedClick.element.selector &&
+                                successfulClick.element.textContent === failedClick.element.textContent &&
+                                successfulClick.element.parentSelector === failedClick.element.parentSelector
+                            );
+                            return !hasIdenticalSuccessful;
+                        })
                         .map((click, idx) => {
                             const statusBadge = `<span class="event-type" style="background: #ef5350; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">FAILED</span>`;
                             
@@ -1345,16 +1679,48 @@ class NetworkTracker {
                                         <span style="background: #e3f2fd; color: #1976d2; padding: 4px 8px; border-radius: 4px; font-size: 0.7em; margin-right: 8px; font-family: monospace;">${click.element.selector}${click.element.id ? ` (ID: ${click.element.id})` : ''}${click.element.className ? ` (Classes: ${click.element.className})` : ''}${click.element.textContent ? ` (Text: "${click.element.textContent}")` : ''}</span>
                                         <span class="event-time">${new Date(click.timestamp).toLocaleTimeString()}</span>
                                     </div>
-                                    <div class="details">
-                                        <div><strong>Element:</strong> ${click.element.tagName}</div>
-                                        ${click.element.textContent ? `<div><strong>Text:</strong> "${click.element.textContent}"</div>` : ''}
-                                        ${click.element.href ? `<div><strong>Href:</strong> ${click.element.href}</div>` : ''}
-                                        ${click.element.id ? `<div><strong>ID:</strong> ${click.element.id}</div>` : ''}
-                                        ${click.element.className ? `<div><strong>Classes:</strong> ${click.element.className}</div>` : ''}
-                                        <div><strong>Selector:</strong> ${click.element.selector}</div>
-                                        <div><strong>Click Time:</strong> ${new Date(click.timestamp).toLocaleTimeString()}</div>
-                                        <div><strong>Status:</strong> Failed</div>
-                                        ${statusMessage}
+                                    <div class="click-details-container">
+                                        <div class="click-basic-info">
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Click Order:</span>
+                                                <span class="click-info-value">${idx + 1}</span>
+                                            </div>
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Element:</span>
+                                                <span class="click-info-value">${click.element.tagName}</span>
+                                            </div>
+                                            ${click.element.textContent ? `<div class="click-info-section"><span class="click-info-label">Text:</span><span class="click-info-value">"${click.element.textContent}"</span></div>` : ''}
+                                            ${click.element.href ? `<div class="click-info-section"><span class="click-info-label">Href:</span><span class="click-info-value">${click.element.href}</span></div>` : ''}
+                                            ${click.element.id ? `<div class="click-info-section"><span class="click-info-label">ID:</span><span class="click-info-value">${click.element.id}</span></div>` : ''}
+                                            ${click.element.className ? `<div class="click-info-section"><span class="click-info-label">Classes:</span><span class="click-info-value">${click.element.className}</span></div>` : ''}
+                                            ${Object.keys(click.element.ariaAttributes || {}).length > 0 ? `
+                                                <div class="click-info-section">
+                                                    <span class="click-info-label">ARIA Attributes:</span>
+                                                    <div class="click-info-value" style="max-height: 150px; overflow-y: auto;">
+                                                        ${Object.entries(click.element.ariaAttributes).map(([key, value]) => 
+                                                            `<div style="margin-bottom: 4px;"><strong>${key}:</strong> ${value}</div>`
+                                                        ).join('')}
+                                                    </div>
+                                                </div>
+                                            ` : ''}
+                                            ${click.element.parentSelector ? `<div class="click-info-section"><span class="click-info-label">Parent Selector:</span><span class="click-info-value">${click.element.parentSelector}</span></div>` : ''}
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Selector:</span>
+                                                <span class="click-info-value">${click.element.selector}</span>
+                                            </div>
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Click Time:</span>
+                                                <span class="click-info-value">${new Date(click.timestamp).toLocaleTimeString()}</span>
+                                            </div>
+                                            <div class="click-info-section">
+                                                <span class="click-info-label">Status:</span>
+                                                <span class="click-info-value">Failed</span>
+                                            </div>
+                                            ${statusMessage}
+                                        </div>
+                                        <div class="click-detailed-info">
+                                            ${''}
+                                        </div>
                                     </div>
                                 </div>
                             `;

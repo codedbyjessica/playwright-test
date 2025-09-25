@@ -1,169 +1,249 @@
-# Playwright GTM Tracker
+# GTM Click Tracker & ARD Analysis
 
-A Playwright-based tool that automatically clicks all buttons and interactive elements on a website while tracking Google Tag Manager (GTM) network responses.
+This project provides tools to automatically test Google Analytics 4 (GA4) event tracking on websites and analyze the results against an Analytics Requirements Document (ARD).
 
-## Features
+## Overview
 
-- 🔍 **Comprehensive Element Detection**: Finds and clicks buttons, links, form elements, and other interactive elements
-- 📊 **GTM Response Tracking**: Captures and logs all GTM-related network requests and responses
-- 📋 **Detailed Reporting**: Generates comprehensive reports with timestamps and element associations
-- ⚙️ **Configurable Options**: Customize behavior with various command-line options
-- 🔄 **Navigation Handling**: Automatically handles page navigation and returns to original page
-- 📁 **JSON Reports**: Saves detailed reports to JSON files for further analysis
+The project consists of two main components:
+
+1. **GTM Click Tracker** (`gtm-click-tracker.js`) - Automatically clicks all clickable elements on a webpage and captures GA4 network events
+2. **ARD Analysis** (`ard-analysis.js`) - Analyzes the captured network events against ARD.csv entries to identify matches and gaps
+
+## Prerequisites
+
+- Node.js (v14 or higher)
+- Playwright browser automation framework
 
 ## Installation
 
 1. Install dependencies:
 ```bash
-npm install
+npm install playwright
 ```
 
 2. Install Playwright browsers:
 ```bash
-npm run install-browsers
+npx playwright install chromium
 ```
 
 ## Usage
 
-### Basic Usage
+### Step 1: Run GTM Click Tracker
+
+The GTM click tracker will automatically:
+- Navigate to the specified URL
+- Handle cookie consent banners (OneTrust)
+- Click all clickable elements
+- Capture GA4 network events
+- Generate comprehensive reports
 
 ```bash
-# Run the basic tracker
-npm start https://example.com
+# Basic usage
+node gtm-click-tracker.js https://www.example.com
 
-# Run the advanced tracker
-node advanced-gtm-tracker.js https://example.com
+# Run in headless mode (no browser window)
+node gtm-click-tracker.js https://www.example.com --headless
+
+# Customize click pause duration (default: 8000ms)
+node gtm-click-tracker.js https://www.example.com --click-pause=5000
 ```
 
-### Advanced Usage Options
-
-```bash
-# Run in headless mode
-node advanced-gtm-tracker.js https://example.com --headless
-
-# Customize timing
-node advanced-gtm-tracker.js https://example.com --slow-mo=500 --wait=3000
-
-# Exclude certain element types
-node advanced-gtm-tracker.js https://example.com --no-links --no-forms
-
-# Set custom timeout
-node advanced-gtm-tracker.js https://example.com --timeout=60000
-```
-
-### Command Line Options
-
+**Options:**
 - `--headless`: Run browser in headless mode
-- `--slow-mo=<ms>`: Slow down actions by specified milliseconds (default: 1000)
-- `--wait=<ms>`: Wait time after each click (default: 2000)
-- `--timeout=<ms>`: Page load timeout (default: 30000)
-- `--no-links`: Exclude links from clicking
-- `--no-forms`: Exclude form elements from clicking
+- `--click-pause=<milliseconds>`: Time to wait after each click (default: 8000ms)
 
-## What Gets Tracked
+### Step 2: Run ARD Analysis
 
-The tool tracks network requests and responses related to:
+After running the GTM click tracker, analyze the results against your ARD:
 
-- `googletagmanager.com`
-- `google-analytics.com`
-- `googleadservices.com`
-- `doubleclick.net`
-- `googlesyndication.com`
-- Any URL containing "gtm", "google-analytics", or "gtag"
+```bash
+node ard-analysis.js
+```
 
-## Output
+The ARD analysis will:
+- Load the ARD.csv file
+- Parse the most recent GTM click tracker results
+- Match network events by `event_category`
+- Generate separate reports for matched and unmatched events
 
-### Console Output
-The tool provides real-time console output showing:
-- 🚀 GTM requests being made
-- 📊 GTM responses received
-- 🖱️ Elements being clicked
-- 📋 Summary report
+## ARD.csv Format
 
-### Reports Generated
-The tool generates multiple types of reports:
+The ARD.csv file should contain the following columns:
 
-1. **JSON Report** (`gtm-report.json` or `advanced-gtm-report.json`): Machine-readable format with all data
-2. **HTML Report** (`gtm-report.html`): Beautiful, interactive web report for easy analysis
+| Column | Description |
+|--------|-------------|
+| Name | Human-readable name for the tracking requirement |
+| event_category | The GA4 event category to match against |
+| event_action | Expected event action format |
+| event_label | Expected event label format |
+| description | Description of what should be tracked |
+| Note | Additional notes or implementation details |
 
-### HTML Report Features
-The HTML report includes:
-- 📊 **Statistics Dashboard**: Summary cards with key metrics
-- 🎯 **GA4 Events Section**: Detailed breakdown of Google Analytics 4 events with parameters
-- 📊 **GTM Responses**: All captured GTM network responses
-- 🖱️ **Clicked Elements**: Visual list of all elements that were clicked
-- 🌐 **Pages Visited**: Navigation history during the test
-- ⚙️ **Test Configuration**: Settings used for the test
-- 🔍 **Interactive Elements**: Expandable sections for detailed parameter viewing
+Example ARD.csv:
+```csv
+Name,event_category,event_action,event_label,description,Note
+Scroll depth,"Scroll Depth","Reached {Baseline|25%|50%|75%|100%}","$PageName","Implement scroll depth tracking for all pages","Note: Ensure that this event is tracked as a non-interaction event."
+Header links,"Header","$Destination_URL OR $Modal_Type","$ClickText OR $LinkName","Track Header links as unique events","Track navigation and modal interactions in header"
+```
 
-### Report Structure
+## Generated Reports
 
-```json
-{
-  "summary": {
-    "totalGTMResponses": 5,
-    "totalElementsClicked": 12,
-    "pagesVisited": ["https://example.com", "https://example.com/page2"],
-    "timestamp": "2024-01-01T12:00:00.000Z",
-    "options": { ... }
-  },
-  "gtmResponses": [
-    {
-      "url": "https://www.googletagmanager.com/gtm.js",
-      "status": 200,
-      "headers": { ... },
-      "body": "...",
-      "timestamp": "2024-01-01T12:00:00.000Z",
-      "elementClicked": "Submit Button",
-      "requestMethod": "GET",
-      "contentType": "application/javascript"
-    }
+### GTM Click Tracker Reports
+
+The GTM click tracker generates several report files in the `test-results/` directory:
+
+1. **HTML Report** (`network-events-{site}-{timestamp}.html`)
+   - Comprehensive visual report with all network events
+   - Categorized by event type (pageview, scroll, click, unmatched)
+   - Detailed click analysis with success/failure status
+   - Interactive accordion sections for URL details
+
+2. **CSV Report** (`network-events-{site}-{timestamp}.csv`)
+   - Simplified click events summary
+   - Includes element details and GA4 event information
+   - Suitable for further analysis in spreadsheet applications
+
+3. **JSON Report** (`network-events-{site}-{timestamp}.json`)
+   - Raw network event data for programmatic analysis
+   - Used by the ARD analysis tool
+   - Contains all extracted GA4 event parameters
+
+### ARD Analysis Reports
+
+The ARD analysis generates:
+
+1. **HTML Report** (`ard-analysis-{timestamp}.html`)
+   - Visual comparison of network events against ARD entries
+   - Separate sections for matched and unmatched events
+   - ARD entry details for each match
+   - Summary statistics
+
+2. **CSV Report** (`ard-analysis-{timestamp}.csv`)
+   - Tabular data of all events with ARD match status
+   - Suitable for further analysis or reporting
+
+## Key Features
+
+### GTM Click Tracker Features
+
+- **Automatic Element Detection**: Finds all clickable elements (links, buttons, inputs, etc.)
+- **Smart Click Handling**: Opens links in new tabs to prevent navigation
+- **Cookie Consent Handling**: Automatically handles OneTrust cookie banners
+- **Network Event Capture**: Intercepts and parses GA4 collect requests
+- **Event Matching**: Associates network events with specific clicks using timing analysis
+- **Comprehensive Reporting**: Multiple report formats for different use cases
+
+### ARD Analysis Features
+
+- **Event Category Matching**: Matches network events to ARD entries by `event_category`
+- **Gap Analysis**: Identifies events not covered by the ARD
+- **Compliance Reporting**: Shows which ARD requirements are being met
+- **Multiple Output Formats**: HTML and CSV reports for different audiences
+
+## Configuration
+
+### GTM Click Tracker Configuration
+
+Key configuration options in `gtm-click-tracker.js`:
+
+```javascript
+const CONFIG = {
+  EVENT_DELAY: 8000,           // Time to wait after each click
+  POLL_INTERVAL: 1000,         // Interval between polling for network events
+  CLICK_TIMEOUT: 5000,         // Timeout for click operations
+  VIEWPORT: { width: 1280, height: 720 },
+  
+  // Elements to exclude from clicking
+  EXCLUDE_SELECTORS_FROM_CLICK: [
+    '[data-gtm-destination="Exit Modal"]',
+    '.exit-link',
+    '#onetrust-accept-btn-handler',
+    // ... more selectors
   ],
-  "clickedElements": ["Submit Button", "Login Link", ...]
+  
+  // GA4 URL patterns to capture
+  NETWORK_FILTERS: {
+    GA4_URL: ['https://www.google-analytics.com/g/collect', 'https://analytics.google.com/g/collect'],
+  }
+};
+```
+
+### Event Parameter Mapping
+
+The tracker extracts various GA4 event parameters:
+
+```javascript
+EVENT_PARAMS: {
+  'eventName': ['en'],
+  'eventCategory': ['ep.event_category', 'ep.Event_Category', 'event_category', 'Event_Category'],
+  'eventAction': ['ep.event_action', 'ep.Event_Action', 'event_action', 'Event_Action'],
+  'eventLabel': ['ep.event_label', 'ep.Event_Label', 'event_label', 'Event_Label'],
+  // ... more parameters
 }
-```
-
-## Examples
-
-### Track GTM on an e-commerce site
-```bash
-node advanced-gtm-tracker.js https://shop.example.com --slow-mo=2000
-```
-
-### Quick test in headless mode
-```bash
-node advanced-gtm-tracker.js https://example.com --headless --wait=1000
-```
-
-### Focus only on buttons (exclude links and forms)
-```bash
-node advanced-gtm-tracker.js https://example.com --no-links --no-forms
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **No GTM responses captured**: The website might not use GTM or the patterns might not match
-2. **Elements not found**: The page might use custom selectors or dynamic content
-3. **Navigation errors**: Some sites prevent going back or have complex navigation
+1. **No network events captured**
+   - Ensure the website has GA4 tracking implemented
+   - Check that the GA4 collect URLs are being intercepted
+   - Verify the site is not blocking automated browsers
+
+2. **Clicks not working**
+   - Some elements may be hidden or require specific conditions
+   - Check the exclude selectors configuration
+   - Review the failed clicks section in the HTML report
+
+3. **ARD analysis shows no matches**
+   - Verify the ARD.csv format is correct
+   - Check that event categories in the ARD match those in the network events
+   - Ensure the GTM click tracker was run successfully
 
 ### Debug Mode
 
-To see more detailed output, you can modify the scripts to add more logging or run with `--slow-mo=2000` to see what's happening in real-time.
+For troubleshooting, you can run the GTM click tracker in non-headless mode to see what's happening:
 
-## Customization
-
-You can customize the GTM patterns by modifying the `gtmPatterns` array in the script:
-
-```javascript
-gtmPatterns: [
-  'googletagmanager.com',
-  'google-analytics.com',
-  'your-custom-pattern.com'
-]
+```bash
+node gtm-click-tracker.js https://www.example.com
 ```
+
+## Example Workflow
+
+1. **Prepare ARD**: Ensure your ARD.csv file is in the project directory
+2. **Run Click Tracker**: `node gtm-click-tracker.js https://your-site.com --headless`
+3. **Review Results**: Check the generated HTML report for initial findings
+4. **Run ARD Analysis**: `node ard-analysis.js`
+5. **Analyze Gaps**: Review the ARD analysis report to identify missing tracking
+6. **Update Implementation**: Address any gaps found in the analysis
+
+## File Structure
+
+```
+playwright-test/
+├── gtm-click-tracker.js    # Main click tracking tool
+├── ard-analysis.js         # ARD analysis tool
+├── ARD.csv                 # Analytics Requirements Document
+├── package.json            # Node.js dependencies
+├── README.md              # This file
+└── test-results/          # Generated reports (created automatically)
+    ├── network-events-*.html
+    ├── network-events-*.csv
+    ├── network-events-*.json
+    ├── ard-analysis-*.html
+    └── ard-analysis-*.csv
+```
+
+## Contributing
+
+To extend the functionality:
+
+1. **Add new event parameters**: Update the `EVENT_PARAMS` configuration
+2. **Modify click behavior**: Adjust the `EXCLUDE_SELECTORS_FROM_CLICK` array
+3. **Enhance reporting**: Modify the HTML/CSS in the report generation methods
+4. **Add new ARD fields**: Update the CSV parsing and matching logic
 
 ## License
 
-MIT License - feel free to use and modify as needed.
+This project is provided as-is for testing and analysis purposes.
