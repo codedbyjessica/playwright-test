@@ -28,6 +28,31 @@ npx playwright install chromium
 
 ## Usage
 
+### Browser Runner (Manual Testing)
+
+For manual testing and development, use the browser runner to open a Playwright browser with helpful debugging tools:
+
+```bash
+# Open browser for manual testing
+node browser-runner.js https://www.example.com
+
+# Run in headless mode (closes after 30 seconds)
+node browser-runner.js https://www.example.com --headless
+
+# Custom viewport size
+node browser-runner.js https://www.example.com --viewport-width=1920 --viewport-height=1080
+```
+
+**Features:**
+- Opens browser with realistic user agent and settings
+- Automatically logs GA4 network requests to console
+- Provides browser console functions for scroll testing:
+  - `scrollToPercentage(25)` - Scroll to 25% of page height
+  - `getScrollPercentage()` - Get current scroll position
+  - `testScrollThresholds()` - Show available scroll thresholds
+- Handles cookie consent banners automatically
+- Keeps browser open for manual inspection (non-headless mode)
+
 ### Step 1: Run GTM Click Tracker
 
 The GTM click tracker will automatically:

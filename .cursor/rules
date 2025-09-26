@@ -3,3 +3,5 @@ do not create new files unless specified
 the point of this project is to match network events to ard, only network events are the source of truth
 
 do not overcomplicate, if something doesnt work, feel free to start over
+
+scrolling: scroll to interval > check if anything fired within x seconds > record > wait > next scroll
