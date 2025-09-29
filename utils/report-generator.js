@@ -55,9 +55,28 @@ class ReportGenerator {
       </div>
     ` : '';
 
+    // Generate screenshot HTML if available
+    const screenshotHTML = click.screenshot ? `
+      <div class="click-info-section">
+        <span class="click-info-label">Element Screenshot:</span>
+        <div class="click-info-value" style="margin-top: 8px;">
+          <div class="screenshot-container" style="border: 2px solid #e0e0e0; border-radius: 8px; padding: 8px; background: #f9f9f9; display: inline-block; max-width: 100%;">
+            <img src="data:image/png;base64,${click.screenshot.toString('base64')}" 
+                 alt="Screenshot of clicked element" 
+                 style="max-width: 300px; max-height: 200px; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer;"
+                 onclick="this.style.maxWidth = this.style.maxWidth === '300px' ? '100%' : '300px'; this.style.maxHeight = this.style.maxHeight === '200px' ? 'none' : '200px';">
+            <div style="text-align: center; margin-top: 6px; font-size: 0.8em; color: #666;">
+              📸 Clicked Element (click to expand)
+            </div>
+          </div>
+        </div>
+      </div>
+    ` : '';
+
     return `
       <div class="click-basic-info">
         ${showOrder ? `<div class="click-info-section"><span class="click-info-label">Click Order:</span><span class="click-info-value">${orderIndex + 1}</span></div>` : ''}
+        ${screenshotHTML}
         <div class="click-info-section">
           <span class="click-info-label">Element:</span>
           <span class="click-info-value">${click.element.tagName}</span>

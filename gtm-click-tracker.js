@@ -241,13 +241,28 @@ class NetworkTracker {
             await element.click({ timeout: CONFIG.CLICK_TIMEOUT });
           }
           
+          // Capture screenshot of the clicked element
+          let screenshotBuffer = null;
+          try {
+            // Wait a moment for any visual changes to settle
+            await this.page.waitForTimeout(100);
+            screenshotBuffer = await element.screenshot({ 
+              type: 'png',
+              timeout: 2000 // Short timeout to avoid hanging
+            });
+            console.log(`📸 Captured screenshot for ${elementInfo.tagName} element`);
+          } catch (screenshotError) {
+            console.log(`⚠️ Could not capture screenshot: ${screenshotError.message}`);
+          }
+          
           // Wait for network events within the time window
           const newNetworkEvents = await this.waitForNetworkEvents(clickStartTime, elementInfo);
           
-          // Update the click event with network event info
+          // Update the click event with network event info and screenshot
           const currentClickEvent = this.clickEvents[this.clickEvents.length - 1];
           currentClickEvent.networkEventsAfter = this.networkEvents.length;
           currentClickEvent.matchedNetworkEvents = newNetworkEvents;
+          currentClickEvent.screenshot = screenshotBuffer;
           
         } catch (clickError) {
           await ElementHandler.recordFailedClick(clickableElements[i], clickError, i, this.clickEvents, this.networkEvents);

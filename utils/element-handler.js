@@ -100,6 +100,18 @@ class ElementHandler {
     try {
       const elementInfo = await ElementHandler.getElementInfo(element);
       
+      // Try to capture screenshot even for failed clicks
+      let screenshotBuffer = null;
+      try {
+        screenshotBuffer = await element.screenshot({ 
+          type: 'png',
+          timeout: 2000 // Short timeout to avoid hanging
+        });
+        console.log(`📸 Captured screenshot for failed click on ${elementInfo.tagName} element`);
+      } catch (screenshotError) {
+        console.log(`⚠️ Could not capture screenshot for failed click: ${screenshotError.message}`);
+      }
+      
       const clickTimestamp = new Date().getTime();
       clickEvents.push({
         timestamp: clickTimestamp,
@@ -109,7 +121,8 @@ class ElementHandler {
         error: clickError.message,
         networkEventsBefore: networkEvents.length,
         networkEventsAfter: networkEvents.length,
-        matchedNetworkEvents: []
+        matchedNetworkEvents: [],
+        screenshot: screenshotBuffer
       });
     } catch (evaluateError) {
       // If we can't even evaluate the element, record a basic failed click
