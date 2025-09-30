@@ -248,7 +248,7 @@ class NetworkTracker {
             await this.page.waitForTimeout(100);
             screenshotBuffer = await element.screenshot({ 
               type: 'png',
-              timeout: 2000 // Short timeout to avoid hanging
+              timeout: 4000 // Short timeout to avoid hanging
             });
             console.log(`📸 Captured screenshot for ${elementInfo.tagName} element`);
           } catch (screenshotError) {
@@ -379,13 +379,19 @@ class NetworkTracker {
       await this.handleOneTrust();
       
       // Scroll the page
-      await this.scrollPage();
+      if (CONFIG.RUN_GA_CATEGORIES.scroll) {
+        console.log('🔄 Running scroll events...');
+        await this.scrollPage();
+        // Wait longer between scroll and click to ensure all scroll events are captured
+        console.log(`⏳ Waiting ${CONFIG.CLICK_EVENT_DELAY/1000} seconds between scroll and click actions...`);
+        await this.page.waitForTimeout(CONFIG.CLICK_EVENT_DELAY);
+      }
 
-      // Wait longer between scroll and click to ensure all scroll events are captured
-      console.log(`⏳ Waiting ${CONFIG.CLICK_EVENT_DELAY/1000} seconds between scroll and click actions...`);
-      await this.page.waitForTimeout(CONFIG.CLICK_EVENT_DELAY);
 
-      await this.clickElements();
+      if (CONFIG.RUN_GA_CATEGORIES.click) {
+          console.log('🔄 Running click events...');
+          await this.clickElements();
+      }
       
       // Wait a bit more to capture any final network events
       await this.page.waitForTimeout(CONFIG.NETWORK_WAIT);

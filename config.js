@@ -79,7 +79,15 @@ const CONFIG = {
     "linkDomain": ['ep.link_domain', 'ep.Link_Domain', 'link_domain', 'Link_Domain'],
     "outbound": ['ep.outbound', 'ep.Outbound', 'outbound', 'Outbound'],
     "fullURL": ['ep.full_url', 'ep.Full_URL', 'full_url', 'Full_URL', "dl"]
+  },
+
+  RUN_GA_CATEGORIES: {
+    click: true,
+    scroll: true,
+    page_view: true,
+    exit_modal: true,
   }
+
 };
 
 module.exports = CONFIG;
