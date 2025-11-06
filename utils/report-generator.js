@@ -65,9 +65,9 @@ class ReportGenerator {
                  alt="Screenshot of clicked element" 
                  style="max-width: 300px; max-height: 200px; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: block; cursor: pointer;"
                  onclick="this.style.maxWidth = this.style.maxWidth === '300px' ? '100%' : '300px'; this.style.maxHeight = this.style.maxHeight === '200px' ? 'none' : '200px';">
-            <div style="text-align: center; margin-top: 6px; font-size: 0.8em; color: #666;">
-              📸 Clicked Element (click to expand)
-            </div>
+             <div style="text-align: center; margin-top: 6px; font-size: 0.8em; color: #666;">
+               📸 Element with Context (click to expand)
+             </div>
           </div>
         </div>
       </div>
@@ -517,6 +517,9 @@ class ReportGenerator {
   // Generate HTML report
   async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType) {
     console.log('\n📋 === NETWORK EVENTS REPORT ===');
+    
+    console.log(`🔍 REPORT DEBUG: Received ${networkEvents.length} network events`);
+    console.log(`🔍 REPORT DEBUG: Event types in array:`, networkEvents.map(e => e.type));
     
     // Filter and categorize events
     const requests = networkEvents.filter(e => e.type === 'request');

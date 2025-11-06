@@ -9,18 +9,21 @@
  */
 
 const CONFIG = {
-  // Timing configuration
-  CLICK_EVENT_DELAY: 8000,        // Interval between actions
+  // Timing configuration - restored to slower, more reliable settings
+  CLICK_EVENT_DELAY: 3000,        // Interval between actions (slower for better event capture)
   CLICK_TIMEOUT: 5000,      // Timeout for click operations
   SCROLL_TIMEOUT: 1000,     // Timeout for scroll operations
-  SCROLL_EVENT_DELAY: 5000, // Delay between scroll action and event capture
-  PAGE_LOAD_TIMEOUT: 10000, // Timeout for page load operations
+  SCROLL_EVENT_DELAY: 5000, // Delay between scroll action and event capture (slower for reliability)
+  PAGE_LOAD_TIMEOUT: 5000,  // Timeout for page load operations (slower for reliability)
   WAIT_AFTER_CLICK: 100,    // Wait time after clicking before polling
-  NETWORK_WAIT: 1000,       // Wait time for network events
+  NETWORK_WAIT: 2000,        // Wait time for network events (increased for better capture)
   MIN_EVENT_DELAY: 0,       // Minimum delay before considering an event as triggered by a click
 
-  SCROLL_THRESHOLDS: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 25, 75],
+  SCROLL_THRESHOLDS: [10, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90, 100], // Full set for comprehensive testing
   SCROLL_BUFFER_PX: 20, // Extra pixels to scroll past threshold to ensure event triggers
+  
+  // Screenshot configuration
+  SCREENSHOT_CONTEXT_PADDING: 100, // Pixels of context around element in screenshots
   
   // Browser configuration
   VIEWPORT: { width: 1280, height: 720 },

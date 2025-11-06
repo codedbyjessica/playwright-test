@@ -94,20 +94,41 @@ class ElementHandler {
   }
 
   // Helper function to record failed click
-  static async recordFailedClick(element, clickError, i, clickEvents, networkEvents) {
+  static async recordFailedClick(element, clickError, i, clickEvents, networkEvents, page) {
     console.log(`⚠️ Failed to click element ${i + 1}: ${clickError.message}`);
     
     try {
       const elementInfo = await ElementHandler.getElementInfo(element);
       
-      // Try to capture screenshot even for failed clicks
+      // Try to capture screenshot with context even for failed clicks
       let screenshotBuffer = null;
       try {
-        screenshotBuffer = await element.screenshot({ 
-          type: 'png',
-          timeout: 2000 // Short timeout to avoid hanging
-        });
-        console.log(`📸 Captured screenshot for failed click on ${elementInfo.tagName} element`);
+        // Get element bounding box to calculate expanded area
+        const boundingBox = await element.boundingBox();
+        if (boundingBox) {
+          const CONFIG = require('../config.js');
+          const padding = CONFIG.SCREENSHOT_CONTEXT_PADDING;
+          const clip = {
+            x: Math.max(0, boundingBox.x - padding),
+            y: Math.max(0, boundingBox.y - padding),
+            width: Math.min(boundingBox.width + (padding * 2), await page.evaluate(() => window.innerWidth)),
+            height: Math.min(boundingBox.height + (padding * 2), await page.evaluate(() => window.innerHeight))
+          };
+          
+          screenshotBuffer = await page.screenshot({ 
+            type: 'png',
+            timeout: 2000,
+            clip: clip
+          });
+          console.log(`📸 Captured contextual screenshot for failed click on ${elementInfo.tagName} element (${clip.width}x${clip.height}px with ${padding}px padding)`);
+        } else {
+          // Fallback to element screenshot if bounding box fails
+          screenshotBuffer = await element.screenshot({ 
+            type: 'png',
+            timeout: 2000
+          });
+          console.log(`📸 Captured fallback screenshot for failed click on ${elementInfo.tagName} element`);
+        }
       } catch (screenshotError) {
         console.log(`⚠️ Could not capture screenshot for failed click: ${screenshotError.message}`);
       }

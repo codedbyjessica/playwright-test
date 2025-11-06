@@ -102,16 +102,41 @@ class NetworkTracker {
   }
 
   async init() {
+    console.log('Browser launched');
     this.browser = await chromium.launch({ 
-      headless: this.options.headless
+      headless: this.options.headless,
+      timeout: 30000, // 30 second timeout for browser launch
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--no-first-run',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-plugins',
+        '--disable-images',
+        '--disable-javascript-harmony-shipping',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--metrics-recording-only',
+        '--no-default-browser-check',
+        '--no-experiments',
+        '--no-pings',
+        '--no-service-autorun'
+      ]
     });
     
+    console.log('Creating browser context...');
     // Create an incognito context with a realistic user agent
     const context = await this.browser.newContext({
       viewport: CONFIG.VIEWPORT,
       userAgent: CONFIG.USER_AGENT
     });
     
+    console.log('Creating new page...');
     this.page = await context.newPage();
 
     // Clear cookies before navigation
@@ -135,6 +160,7 @@ class NetworkTracker {
             postData: request.postData(),
             ...extractedParams
           });
+          console.log(`🔍 ARRAY DEBUG: Network events array now has ${this.networkEvents.length} events`);
       }
     });
 
@@ -176,7 +202,7 @@ class NetworkTracker {
       // Get all clickable elements with more comprehensive selectors
       const clickableElements = await this.page.$$(CONFIG.SELECTORS.CLICKABLE);
       
-      console.log(`🖱️ Found ${clickableElements.length} clickable elements`);
+      console.log(`Found ${clickableElements.length} clickable elements`);
       
       
       for (let i = 0; i < clickableElements.length; i++) {
@@ -231,7 +257,7 @@ class NetworkTracker {
           });
           
           // Do regular click for all elements (more reliable)
-          console.log(`📝 Clicking ${elementInfo.tagName} element: "${elementInfo.textContent}"`);
+          console.log(`Clicking element ${i + 1}/${clickableElements.length}: ${elementInfo.tagName} "${elementInfo.textContent}"`);
           
           // For links, ensure they open in new tab/window
           if (elementInfo.tagName === 'a' && elementInfo.href) {
@@ -241,16 +267,37 @@ class NetworkTracker {
             await element.click({ timeout: CONFIG.CLICK_TIMEOUT });
           }
           
-          // Capture screenshot of the clicked element
+          // Capture screenshot of the clicked element with context
           let screenshotBuffer = null;
           try {
             // Wait a moment for any visual changes to settle
             await this.page.waitForTimeout(100);
-            screenshotBuffer = await element.screenshot({ 
-              type: 'png',
-              timeout: 4000 // Short timeout to avoid hanging
-            });
-            console.log(`📸 Captured screenshot for ${elementInfo.tagName} element`);
+            
+            // Get element bounding box to calculate expanded area
+            const boundingBox = await element.boundingBox();
+            if (boundingBox) {
+              const padding = CONFIG.SCREENSHOT_CONTEXT_PADDING;
+              const clip = {
+                x: Math.max(0, boundingBox.x - padding),
+                y: Math.max(0, boundingBox.y - padding),
+                width: Math.min(boundingBox.width + (padding * 2), await this.page.evaluate(() => window.innerWidth)),
+                height: Math.min(boundingBox.height + (padding * 2), await this.page.evaluate(() => window.innerHeight))
+              };
+              
+              screenshotBuffer = await this.page.screenshot({ 
+                type: 'png',
+                timeout: 4000,
+                clip: clip
+              });
+              console.log(`📸 Captured contextual screenshot for ${elementInfo.tagName} element (${clip.width}x${clip.height}px with ${padding}px padding)`);
+            } else {
+              // Fallback to element screenshot if bounding box fails
+              screenshotBuffer = await element.screenshot({ 
+                type: 'png',
+                timeout: 4000
+              });
+              console.log(`📸 Captured fallback screenshot for ${elementInfo.tagName} element`);
+            }
           } catch (screenshotError) {
             console.log(`⚠️ Could not capture screenshot: ${screenshotError.message}`);
           }
@@ -265,7 +312,7 @@ class NetworkTracker {
           currentClickEvent.screenshot = screenshotBuffer;
           
         } catch (clickError) {
-          await ElementHandler.recordFailedClick(clickableElements[i], clickError, i, this.clickEvents, this.networkEvents);
+          await ElementHandler.recordFailedClick(clickableElements[i], clickError, i, this.clickEvents, this.networkEvents, this.page);
           
           // Continue with next element instead of crashing
           continue;
@@ -359,17 +406,27 @@ class NetworkTracker {
   }
 
   async run() {
+    const startTime = Date.now();
+    const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     try {
-      console.log(`🌐 Opening incognito window for: ${this.options.url}`);
+      console.log(`🚀 [${executionId}] SCRIPT STARTED - PID: ${process.pid}`);
+      console.log(`🌐 [${executionId}] Opening incognito window for: ${this.options.url}`);
+      console.log(`🔧 [${executionId}] Execution mode: ${this.options.headless ? 'headless' : 'headed'}`);
+      console.log(`🔧 [${executionId}] Config delays - CLICK: ${CONFIG.CLICK_EVENT_DELAY}ms, SCROLL: ${CONFIG.SCROLL_EVENT_DELAY}ms, NETWORK_WAIT: ${CONFIG.NETWORK_WAIT}ms`);
+      const initStart = Date.now();
       await this.init();
+      console.log(`✅ Browser initialized in ${Date.now() - initStart}ms`);
       
       // Navigate to URL
+      console.log(`Navigating to: ${this.options.url}`);
+      const navStart = Date.now();
       await this.page.goto(this.options.url, { 
         waitUntil: 'domcontentloaded',
         timeout: this.options.timeout 
       });
+      console.log(`Page loaded in ${Date.now() - navStart}ms`);
       
-      console.log(`⏳ Waiting ${CONFIG.PAGE_LOAD_TIMEOUT}ms for page to load...`);
+      console.log(`⏳ Waiting ${CONFIG.PAGE_LOAD_TIMEOUT}ms for page to stabilize...`);
       await this.page.waitForTimeout(CONFIG.PAGE_LOAD_TIMEOUT);
 
       // Dismiss Pantheon
@@ -380,7 +437,7 @@ class NetworkTracker {
       
       // Scroll the page
       if (CONFIG.RUN_GA_CATEGORIES.scroll) {
-        console.log('🔄 Running scroll events...');
+        console.log('Starting scroll analysis');
         await this.scrollPage();
         // Wait longer between scroll and click to ensure all scroll events are captured
         console.log(`⏳ Waiting ${CONFIG.CLICK_EVENT_DELAY/1000} seconds between scroll and click actions...`);
@@ -389,7 +446,7 @@ class NetworkTracker {
 
 
       if (CONFIG.RUN_GA_CATEGORIES.click) {
-          console.log('🔄 Running click events...');
+          console.log('Starting click analysis');
           await this.clickElements();
       }
       
@@ -398,6 +455,9 @@ class NetworkTracker {
       
       // Log summary statistics
       console.log('\n📊 === COMPREHENSIVE TRACKING SUMMARY ===');
+      console.log(`🔍 SUMMARY DEBUG: Network events array has ${this.networkEvents.length} events before summary`);
+      console.log(`🔍 SUMMARY DEBUG: Event types:`, this.networkEvents.map(e => e.type));
+      
       const successfulClicks = this.clickEvents.filter(click => click.success === true);
       const failedClicks = this.clickEvents.filter(click => click.success === false);
       const totalNetworkEvents = this.networkEvents.filter(e => e.type === 'request').length;
@@ -407,6 +467,16 @@ class NetworkTracker {
       console.log(`Failed clicks: ${failedClicks.length}`);
       console.log(`Total scroll actions: ${this.scrollEvents.length}`);
       console.log(`Total GA4 network events: ${totalNetworkEvents}`);
+      console.log(`Total network events: ${totalNetworkEvents}`);
+      console.log(`📊 Total extracted events for ARD analysis: ${this.networkEvents.length}`);
+      
+      // Debug: Show breakdown of event types
+      const eventTypes = {};
+      this.networkEvents.forEach(event => {
+        const type = event.type || 'undefined';
+        eventTypes[type] = (eventTypes[type] || 0) + 1;
+      });
+      console.log('📊 Event types breakdown:', eventTypes);
       
       // Count matched clicks using the new direct matching approach
       let matchedClicks = 0;
@@ -456,6 +526,11 @@ class NetworkTracker {
       }
       
       // Generate HTML report
+      console.log('Generating report');
+      console.log(`🔍 DEBUG: About to generate report with ${this.networkEvents.length} network events`);
+      console.log(`🔍 DEBUG: Network events array:`, this.networkEvents.map(e => ({ type: e.type, url: e.url?.substring(0, 50) })));
+      
+      const reportStart = Date.now();
       await this.reportGenerator.generateHTMLReport(
         this.options,
         this.networkEvents,
@@ -464,6 +539,10 @@ class NetworkTracker {
         this.createExtractEventsFromNetworkData(),
         this.createFilterEventsByType()
       );
+      console.log(`✅ Reports generated in ${Date.now() - reportStart}ms`);
+      
+      const totalTime = Date.now() - startTime;
+      console.log(`🎉 Test completed successfully in ${totalTime}ms (${(totalTime/1000).toFixed(1)}s)`);
       
     } catch (error) {
       console.error('❌ Error running tracker:', error);
@@ -495,9 +574,11 @@ class NetworkTracker {
 }
 
 // Parse command line arguments
+console.log('🎬 SCRIPT ENTRY POINT - Args:', process.argv);
 const args = process.argv.slice(2);
 const url = args[0];
 const headless = args.includes('--headless');
+console.log('🎯 PARSED ARGS - URL:', url, 'Headless:', headless);
 
 // Parse click pause option
 let clickPause = CONFIG.CLICK_EVENT_DELAY; // default

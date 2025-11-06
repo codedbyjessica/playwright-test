@@ -5,8 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "playwright test",
-    "start": "node gtm-tracker.js",
-    "install-browsers": "playwright install"
+    "start": "node gtm-click-tracker.js",
+    "install-browsers": "npx playwright install chromium",
+    "check-browser": "node check-browser.js",
+    "frontend": "cd frontend && npm run dev"
   },
   "keywords": ["playwright", "gtm", "automation", "testing"],
   "author": "",
