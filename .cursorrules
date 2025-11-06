@@ -1,0 +1,8 @@
+do not mess with the delay between tests
+frontend and gtm-click-tracker should be using the extract same system
+
+network events are the key to this project
+
+sometimes the ui gets stuck on Starting browser..., do not change my delays because of this, this is an error not because things are slow.
+
+dont remove features unless otherwise asked

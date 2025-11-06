@@ -1,0 +1,105 @@
+# Playwright GA4 Event Tracker - Cursor Ignore
+
+# Generated Reports and Test Results
+test-results/
+*.html
+*.csv
+*.json
+network-events-*.html
+network-events-*.csv
+network-events-*.json
+
+# Screenshots
+screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# Node.js Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Frontend Dependencies and Build
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/.vercel/
+frontend/.turbo/
+frontend/package-lock.json
+
+# Environment and Config (if sensitive)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime and Cache
+.cache/
+.temp/
+.tmp/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage and Testing
+coverage/
+.nyc_output/
+.coverage/
+
+# Playwright Specific
+playwright-report/
+test-results/
+playwright/.cache/
+
+# Browser Downloads (if any)
+downloads/
+
+# Backup Files
+*.bak
+*.backup
+*.old
+
+# Large CSV Files (optional - uncomment if you have large data files)
+# *.csv
+# ARD.csv
+
+# Temporary Files Created During Development
+temp-*
+debug-*
+test-*
+
+# Lock Files for Development Tools
+.next/dev/lock
+
+.cursorrules
