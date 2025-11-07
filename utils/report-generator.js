@@ -178,16 +178,21 @@ class ReportGenerator {
 
   // Helper function to generate events section HTML
   generateEventsSectionHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, eventType, title, icon) {
+    // Filter out form testing events from main network analysis
+    const nonFormNetworkEvents = networkEvents.filter(event => 
+      event.type === 'request' && event.source !== 'form_testing'
+    );
+    
     // Special handling for pageview events
     if (eventType === 'pageview') {
-      return this.generatePageviewEventsHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, title, icon);
+      return this.generatePageviewEventsHTML(nonFormNetworkEvents, extractEventsFromNetworkData, filterEventsByType, title, icon);
     }
     
     return `
       <div class="subsection">
         <h3>${icon} ${title}</h3>
         <div id="${eventType}EventsContainer">
-          ${networkEvents.filter(event => event.type === 'request').map((event, idx) => {
+          ${nonFormNetworkEvents.map((event, idx) => {
             const extractedEvents = extractEventsFromNetworkData(event);
             const filteredEvents = filterEventsByType(extractedEvents, eventType);
             return filteredEvents.length > 0 ? this.generateEventHTML(event, filteredEvents) : '';
@@ -201,7 +206,8 @@ class ReportGenerator {
   generatePageviewEventsHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, title, icon) {
     const pageviewEvents = [];
     
-    networkEvents.filter(event => event.type === 'request').forEach(event => {
+    // networkEvents is already filtered to exclude form testing events
+    networkEvents.forEach(event => {
       const extractedEvents = extractEventsFromNetworkData(event);
       const filteredEvents = filterEventsByType(extractedEvents, 'pageview');
       if (filteredEvents.length > 0) {
@@ -362,6 +368,307 @@ class ReportGenerator {
       .join('');
   }
 
+  // Generate form testing HTML
+  generateFormTestingHTML(formTestResults) {
+    if (!formTestResults || (!formTestResults.fieldTests.length && !formTestResults.submissionTests.length)) {
+      return '<p>No form testing results available.</p>';
+    }
+
+    // TEMPORARY DEBUG SECTION - Extract all GA4 events from form testing
+    const allFormGA4Events = [];
+    
+    // Collect from field tests (check multiple possible structures)
+    if (formTestResults.fieldTests) {
+      formTestResults.fieldTests.forEach(test => {
+        // Check test.result.networkEvents
+        if (test.result && test.result.networkEvents) {
+          test.result.networkEvents.forEach(event => {
+            allFormGA4Events.push({
+              source: 'field_test',
+              field: test.field,
+              testType: test.testType,
+              timestamp: event.timestamp,
+              url: event.url,
+              eventName: event.eventName || 'unknown',
+              params: event.extractedParams || {}
+            });
+          });
+        }
+        // Also check direct test.networkEvents
+        if (test.networkEvents) {
+          test.networkEvents.forEach(event => {
+            allFormGA4Events.push({
+              source: 'field_test_direct',
+              field: test.field,
+              testType: test.testType,
+              timestamp: event.timestamp,
+              url: event.url,
+              eventName: event.eventName || 'unknown',
+              params: event.extractedParams || {}
+            });
+          });
+        }
+      });
+    }
+    
+    // Collect from submission tests (check multiple possible structures)
+    if (formTestResults.submissionTests) {
+      formTestResults.submissionTests.forEach(test => {
+        // Check test.result.networkEvents
+        if (test.result && test.result.networkEvents) {
+          test.result.networkEvents.forEach(event => {
+            allFormGA4Events.push({
+              source: 'submission_test',
+              testType: test.testType,
+              timestamp: event.timestamp,
+              url: event.url,
+              eventName: event.eventName || 'unknown',
+              params: event.extractedParams || {}
+            });
+          });
+        }
+        // Also check direct test.networkEvents
+        if (test.networkEvents) {
+          test.networkEvents.forEach(event => {
+            allFormGA4Events.push({
+              source: 'submission_test_direct',
+              testType: test.testType,
+              timestamp: event.timestamp,
+              url: event.url,
+              eventName: event.eventName || 'unknown',
+              params: event.extractedParams || {}
+            });
+          });
+        }
+      });
+    }
+
+    // Get all captured events from debug array
+    const allCapturedEvents = formTestResults.allCapturedEvents || [];
+    
+    const debugHTML = `
+      <div style="background: #fff3cd; border: 2px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 8px;">
+        <h4 style="color: #856404; margin-top: 0;">🔍 TEMPORARY DEBUG: All Captured GA4 Events (${allCapturedEvents.length} total)</h4>
+        <p style="color: #856404; font-style: italic;">This section will be removed after debugging. Shows ALL network events captured during form testing.</p>
+        
+        ${allCapturedEvents.length === 0 ? 
+          '<p style="color: #d32f2f; font-weight: bold;">❌ NO EVENTS CAPTURED - Check network event capture logic!</p>' :
+          `<div style="background: white; padding: 10px; border-radius: 4px; max-height: 400px; overflow-y: auto;">
+            <h5>Event URLs (${allCapturedEvents.length} events):</h5>
+            ${allCapturedEvents.map((event, idx) => {
+              const isMatched = event.source.startsWith('MATCHED_');
+              const bgColor = isMatched ? '#e8f5e8' : '#f8f9fa';
+              const borderColor = isMatched ? '#4caf50' : '#dee2e6';
+              
+              return `
+                <div style="border-bottom: 1px solid #eee; padding: 5px 0; font-family: monospace; font-size: 0.8em; background: ${bgColor}; border-left: 3px solid ${borderColor}; padding-left: 8px; margin: 2px 0;">
+                  <strong>${idx + 1}.</strong> 
+                  <span style="color: ${isMatched ? '#2e7d32' : '#1976d2'}; font-weight: ${isMatched ? 'bold' : 'normal'};">[${event.source}]</span> 
+                  <span style="color: #666;">${new Date(event.timestamp).toLocaleTimeString()}</span> - 
+                  <span style="color: #d32f2f;">${event.eventName}</span>
+                  ${event.actionStart ? `<br><span style="color: #666; font-size: 0.7em;">Action Window: ${new Date(event.actionStart).toLocaleTimeString()} - ${new Date(event.actionEnd).toLocaleTimeString()}</span>` : ''}
+                  <br><span style="color: #333; word-break: break-all;">${event.url}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>`
+        }
+      </div>
+    `;
+
+    const fieldTestsHTML = formTestResults.fieldTests.length > 0 ? `
+      <div class="form-test-subsection">
+        <h4>📝 Individual Field Tests (${formTestResults.fieldTests.length})</h4>
+        ${formTestResults.fieldTests.map((test, idx) => {
+          const statusBadge = test.result.success 
+            ? `<span class="event-type" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">SUCCESS</span>`
+            : `<span class="event-type" style="background: #ef5350; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">FAILED</span>`;
+
+          const errorBadge = test.errorState.hasError
+            ? `<span class="event-type" style="background: #ff9800; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">ERROR SHOWN</span>`
+            : `<span class="event-type" style="background: #2196f3; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">NO ERROR</span>`;
+
+          const networkEventsBadge = test.result.networkEvents && test.result.networkEvents.length > 0
+            ? `<span class="event-type" style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${test.result.networkEvents.length} GA4 EVENTS</span>`
+            : '';
+
+          return `
+            <div class="event-item" style="background: ${test.result.success ? '#f1f8e9' : '#ffebee'}; border-left: 4px solid ${test.result.success ? '#4caf50' : '#ef5350'};">
+              <div class="event-header">
+                <span style="background: #2196f3; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 8px;">#${idx + 1}</span>
+                ${statusBadge}
+                ${errorBadge}
+                ${networkEventsBadge}
+                <span style="background: #607d8b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${test.testType}</span>
+                <span class="event-time">${new Date(test.timestamp).toLocaleTimeString()}</span>
+              </div>
+              <div class="click-details-container">
+                <div class="click-basic-info">
+                  <div class="click-info-section">
+                    <span class="click-info-label">Field:</span>
+                    <span class="click-info-value">${test.field}</span>
+                  </div>
+                  <div class="click-info-section">
+                    <span class="click-info-label">Test Value:</span>
+                    <span class="click-info-value">${JSON.stringify(test.result.value)}</span>
+                  </div>
+                  ${test.errorState.hasError ? `
+                    <div class="click-info-section">
+                      <span class="click-info-label">Error Message:</span>
+                      <span class="click-info-value" style="color: #d32f2f;">${test.errorState.errorText}</span>
+                    </div>
+                  ` : ''}
+                </div>
+                <div class="click-detailed-info">
+                  ${test.result.networkEvents && test.result.networkEvents.length > 0 ? 
+                    test.result.networkEvents.map((evt, evtIdx) => {
+                      const parameterHtml = this.generateParameterHTML(evt);
+                      return `
+                        <div style="margin-top: 10px; padding: 10px; background: #e8f5e8; border-radius: 5px; border-left: 3px solid #4caf50;">
+                          <strong>📊 GA4 Event ${evtIdx + 1}:</strong><br>
+                          <div><strong>Event Name:</strong> ${evt.eventName || 'unknown'}</div>
+                          <div><strong>Time:</strong> ${new Date(evt.timestamp).toLocaleTimeString()}</div>
+                          ${parameterHtml}
+                          <div style="margin-top: 8px;">
+                            <div class="accordion-header" onclick="toggleAccordion(this)" style="cursor: pointer; padding: 6px 8px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; font-size: 0.8em;">
+                              <span class="accordion-icon">▶</span>
+                              <span>Full URL</span>
+                            </div>
+                            <div class="accordion-content" style="display: none;">
+                              <div style="padding: 6px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; font-size: 0.7em; color: #555; margin-top: 4px; font-family: monospace; word-break: break-all;">${evt.url}</div>
+                            </div>
+                          </div>
+                        </div>
+                      `;
+                    }).join('') : 
+                    '<div style="padding: 10px; color: #666;">No GA4 events triggered by this field interaction.</div>'
+                  }
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : '';
+
+    const submissionTestsHTML = formTestResults.submissionTests.length > 0 ? `
+      <div class="form-test-subsection">
+        <h4>🚀 Form Submission Tests (${formTestResults.submissionTests.length})</h4>
+        ${formTestResults.submissionTests.map((test, idx) => {
+          let statusBadge = '';
+          let statusColor = '';
+          
+          if (test.testType === 'valid_submission') {
+            statusBadge = test.success 
+              ? `<span class="event-type" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">SUCCESS</span>`
+              : `<span class="event-type" style="background: #ef5350; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">FAILED</span>`;
+            statusColor = test.success ? '#4caf50' : '#ef5350';
+          } else {
+            // Error testing scenarios
+            const errorsFound = test.errorResults ? test.errorResults.filter(e => e.found).length : 0;
+            const totalExpected = test.errorResults ? test.errorResults.length : 0;
+            statusBadge = `<span class="event-type" style="background: #ff9800; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${errorsFound}/${totalExpected} ERRORS</span>`;
+            statusColor = errorsFound > 0 ? '#ff9800' : '#2196f3';
+          }
+
+          const networkEventsBadge = test.networkEvents && test.networkEvents.length > 0
+            ? `<span class="event-type" style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${test.networkEvents.length} GA4 EVENTS</span>`
+            : '';
+
+          return `
+            <div class="event-item" style="background: #f8f9fa; border-left: 4px solid ${statusColor};">
+              <div class="event-header">
+                <span style="background: #2196f3; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 8px;">#${idx + 1}</span>
+                ${statusBadge}
+                ${networkEventsBadge}
+                <span style="background: #607d8b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${test.testType.replace('_', ' ').toUpperCase()}</span>
+                <span class="event-time">${new Date(test.timestamp).toLocaleTimeString()}</span>
+              </div>
+              <div class="click-details-container">
+                <div class="click-basic-info">
+                  <div class="click-info-section">
+                    <span class="click-info-label">Test Type:</span>
+                    <span class="click-info-value">${test.testType.replace('_', ' ')}</span>
+                  </div>
+                  ${test.success !== undefined ? `
+                    <div class="click-info-section">
+                      <span class="click-info-label">Success:</span>
+                      <span class="click-info-value" style="color: ${test.success ? '#4caf50' : '#ef5350'};">${test.success ? 'Yes' : 'No'}</span>
+                    </div>
+                  ` : ''}
+                  ${test.errorResults ? `
+                    <div class="click-info-section">
+                      <span class="click-info-label">Validation Errors:</span>
+                      <div class="click-info-value">
+                        ${test.errorResults.map(error => `
+                          <div style="margin: 4px 0; padding: 4px 8px; border-radius: 4px; background: ${error.found ? '#ffebee' : '#e8f5e8'}; color: ${error.found ? '#d32f2f' : '#2e7d32'};">
+                            ${error.selector}: ${error.found ? '✓ Error shown' : '✗ No error'}
+                            ${error.text ? ` - "${error.text}"` : ''}
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  ` : ''}
+                </div>
+                <div class="click-detailed-info">
+                  ${test.networkEvents && test.networkEvents.length > 0 ? 
+                    test.networkEvents.map((evt, evtIdx) => {
+                      const parameterHtml = this.generateParameterHTML(evt);
+                      return `
+                        <div style="margin-top: 10px; padding: 10px; background: #e8f5e8; border-radius: 5px; border-left: 3px solid #4caf50;">
+                          <strong>📊 GA4 Event ${evtIdx + 1}:</strong><br>
+                          <div><strong>Event Name:</strong> ${evt.eventName || 'unknown'}</div>
+                          <div><strong>Time:</strong> ${new Date(evt.timestamp).toLocaleTimeString()}</div>
+                          ${parameterHtml}
+                          <div style="margin-top: 8px;">
+                            <div class="accordion-header" onclick="toggleAccordion(this)" style="cursor: pointer; padding: 6px 8px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; font-size: 0.8em;">
+                              <span class="accordion-icon">▶</span>
+                              <span>Full URL</span>
+                            </div>
+                            <div class="accordion-content" style="display: none;">
+                              <div style="padding: 6px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; font-size: 0.7em; color: #555; margin-top: 4px; font-family: monospace; word-break: break-all;">${evt.url}</div>
+                            </div>
+                          </div>
+                        </div>
+                      `;
+                    }).join('') : 
+                    '<div style="padding: 10px; color: #666;">No GA4 events triggered by this form submission.</div>'
+                  }
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : '';
+
+    return `
+      <div class="form-testing-section">
+        ${debugHTML}
+        ${fieldTestsHTML}
+        ${submissionTestsHTML}
+        
+        <div class="form-test-subsection">
+          <h4>📊 Form Testing Summary</h4>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; text-align: center;">
+              <div style="font-size: 1.5em; font-weight: bold; color: #2196f3;">${formTestResults.summary.totalFieldTests}</div>
+              <div style="color: #666; font-size: 0.9em;">Field Tests</div>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; text-align: center;">
+              <div style="font-size: 1.5em; font-weight: bold; color: #4caf50;">${formTestResults.summary.totalSubmissionTests}</div>
+              <div style="color: #666; font-size: 0.9em;">Submission Tests</div>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; text-align: center;">
+              <div style="font-size: 1.5em; font-weight: bold; color: #9c27b0;">${formTestResults.summary.totalNetworkEvents}</div>
+              <div style="color: #666; font-size: 0.9em;">GA4 Events</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   // Generate CSV report
   async generateCSVReport(testResultsDir, reportFilename, clickEvents, extractEventsFromNetworkData) {
     console.log('\n📊 === GENERATING CSV REPORT ===');
@@ -515,17 +822,19 @@ class ReportGenerator {
   }
 
   // Generate HTML report
-  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType) {
+  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null) {
     console.log('\n📋 === NETWORK EVENTS REPORT ===');
     
     console.log(`🔍 REPORT DEBUG: Received ${networkEvents.length} network events`);
     console.log(`🔍 REPORT DEBUG: Event types in array:`, networkEvents.map(e => e.type));
     
-    // Filter and categorize events
-    const requests = networkEvents.filter(e => e.type === 'request');
+    // Filter and categorize events (exclude form testing events from main analysis)
+    const requests = networkEvents.filter(e => e.type === 'request' && e.source !== 'form_testing');
+    const allRequests = networkEvents.filter(e => e.type === 'request');
     
     console.log(`Total network events: ${networkEvents.length}`);
-    console.log(`Requests: ${requests.length}`);
+    console.log(`Non-form requests: ${requests.length}`);
+    console.log(`All requests (including form): ${allRequests.length}`);
     
     // Generate filename
     const siteUrl = new URL(options.url).hostname.replace(/\./g, '-');
@@ -544,7 +853,7 @@ class ReportGenerator {
     // Generate JSON report for ARD analysis
     await this.generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, extractEventsFromNetworkData);
 
-    const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType);
+    const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults);
 
     const htmlPath = path.join(testResultsDir, `${reportFilename}.html`);
     fs.writeFileSync(htmlPath, html);
@@ -552,14 +861,14 @@ class ReportGenerator {
   }
 
   // Generate the main HTML content
-  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType) {
+  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null) {
     return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto GA Checker Report - ${options.url}</title>
+    <title>GTM Comprehensive Tracker Report - ${options.url}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -800,27 +1109,62 @@ class ReportGenerator {
             border-radius: 4px;
             border: 1px solid #dee2e6;
         }
+        .form-testing-section {
+            margin-bottom: 30px;
+        }
+        .form-test-subsection {
+            margin-bottom: 25px;
+        }
+        .form-test-subsection h4 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 8px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🌐 Auto GA Checker Report</h1>
+            <h1>🎯 GTM Comprehensive Tracker Report</h1>
             <h2><a href="${options.url}" target="_blank" style="color: #fff; text-decoration: underline;">${options.url}</a></h2>
+            <p style="margin-top: 10px; opacity: 0.9;">Complete testing: Clicks, Scrolls, Forms & GA4 Analysis</p>
         </div>
         
         <div class="stats">
             <div class="stat-card">
                 <div class="stat-number">${requests.length}</div>
-                <div class="stat-label">Total Requests</div>
+                <div class="stat-label">Click/Scroll Requests</div>
             </div>
             <div class="stat-card">
                 <div class="stat-number">${new Set(requests.map(e => e.url)).size}</div>
                 <div class="stat-label">Unique URLs</div>
             </div>
+            ${formTestResults && formTestResults.summary ? `
+            <div class="stat-card">
+                <div class="stat-number">${(formTestResults.summary.totalFieldTests || 0) + (formTestResults.summary.totalSubmissionTests || 0)}</div>
+                <div class="stat-label">Form Tests</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">${formTestResults.summary.totalNetworkEvents || 0}</div>
+                <div class="stat-label">Form GA4 Events</div>
+            </div>
+            ` : ''}
         </div>
 
+        ${formTestResults && formTestResults.summary && (formTestResults.summary.totalFieldTests > 0 || formTestResults.summary.totalSubmissionTests > 0) ? `
         <div class="section">
+            <h2>📝 Form Testing Results (Isolated)</h2>
+            <p style="color: #666; margin-bottom: 20px; font-style: italic;">
+                Form testing was conducted on a fresh page load to ensure isolation from click testing.
+            </p>
+            ${this.generateFormTestingHTML(formTestResults)}
+        </div>
+        ` : ''}
+
+        <div class="section">
+            <h2>🌐 Website Interaction Analysis</h2>
             
             ${this.generateEventsSectionHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, 'pageview', 'Pageview Events', '📄')}
             
@@ -835,6 +1179,9 @@ class ReportGenerator {
             <!-- All Successful Click Events Section -->
             <div class="subsection">
                 <h3>✅ All Successful Click Events (${clickEvents.filter(click => click.success === true).length})</h3>
+                <p style="color: #666; margin-bottom: 15px; font-style: italic;">
+                    Click events from automated element interaction testing (excludes form testing).
+                </p>
                 <div id="successfulClicksContainer">
                     ${clickEvents
                         .filter(click => click.success === true)

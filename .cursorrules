@@ -6,3 +6,9 @@ network events are the key to this project
 sometimes the ui gets stuck on Starting browser..., do not change my delays because of this, this is an error not because things are slow.
 
 dont remove features unless otherwise asked
+
+reuse code as much as you change
+
+dont write new function without taking a look at whats already available for unless
+
+click, scroll, forms and every other type of test action should do the same: perform action, wait x seconds to see if anything fires, meanwhile we should be looking at what fires from when the action is performed to the end of the x seconds 

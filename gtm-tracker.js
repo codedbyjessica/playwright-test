@@ -1,27 +1,32 @@
 /**
- * Google Analytics 4 (GA4) Click Event Tracker
+ * Google Analytics 4 (GA4) Comprehensive Tracker
  * 
- * This script automates clicking on all clickable elements on a webpage and tracks
- * which clicks trigger Google Analytics 4 events. It generates a comprehensive HTML
- * report showing which elements triggered GA4 events and which didn't.
+ * This script provides comprehensive testing for Google Analytics 4 implementations including:
+ * - Click tracking on all interactive elements
+ * - Scroll depth tracking at various thresholds
+ * - Form testing with validation scenarios
+ * - Network event capture and analysis
+ * - Detailed HTML reporting with visual insights
  * 
  * Key Features:
  * - Automatically clicks all clickable elements (links, buttons, etc.)
- * - Tracks network requests to GA4 endpoints
- * - Matches network events to specific clicks using timing analysis
- * - Generates detailed HTML reports with two-column layout
- * - Handles cookie consent banners (OneTrust)
- * - Opens links in new tabs to prevent navigation
- * - Deduplicates network events to prevent false matches
+ * - Tests scroll depth tracking at multiple percentage thresholds
+ * - Comprehensive form testing (field validation, submissions, error handling)
+ * - Tracks network requests to GA4 endpoints with timing analysis
+ * - Generates detailed HTML reports with categorized results
+ * - Handles cookie consent banners (OneTrust, Pantheon)
+ * - Isolated testing environments to prevent cross-contamination
+ * - Supports custom form configurations for different forms
  * 
  * Usage:
- *   node gtm-click-tracker.js <url> [--headless] [--click-pause=8000]
+ *   node gtm-tracker.js <url> [options]
  * 
- * Example:
- *   node gtm-click-tracker.js https://www.example.com --headless
+ * Examples:
+ *   node gtm-tracker.js https://www.example.com --headless
+ *   node gtm-tracker.js https://www.example.com --form-tests --form-config=neffy_consumer_signup
  * 
  * @author AI Assistant
- * @version 2.0
+ * @version 3.0
  */
 
 const { chromium } = require('playwright');
@@ -30,10 +35,12 @@ const EventParser = require('./utils/event-parser');
 const EventClassifier = require('./utils/event-classifier');
 const ElementHandler = require('./utils/element-handler');
 const NetworkHandler = require('./utils/network-handler');
+const FormTester = require('./utils/form-tester');
 const CONFIG = require('./config');
+const FORM_CONFIGS = require('./custom-config');
 
 
-class NetworkTracker {
+class GTMTracker {
   constructor(options = {}) {
     this.options = {
       url: options.url || 'https://example.com',
@@ -47,10 +54,28 @@ class NetworkTracker {
     this.networkEvents = [];
     this.scrollEvents = [];
     this.clickEvents = [];
+    this.formTestResults = null; // Store form testing results
     this.matchedNetworkEventKeys = new Set(); // Track which network events have been matched to clicks
     this.browser = null;
     this.page = null;
     this.reportGenerator = new ReportGenerator();
+    
+    // Form testing configuration - now enabled by default
+    this.formConfig = options.formConfig || this.detectDefaultFormConfig();
+    this.runFormTests = options.runFormTests !== false; // Default to true unless explicitly disabled
+  }
+
+  /**
+   * Detect default form configuration (use first available config)
+   */
+  detectDefaultFormConfig() {
+    const availableConfigs = Object.keys(FORM_CONFIGS);
+    if (availableConfigs.length > 0) {
+      const defaultConfig = availableConfigs[0];
+      console.log(`📋 Auto-detected form config: ${defaultConfig}`);
+      return FORM_CONFIGS[defaultConfig];
+    }
+    return null;
   }
 
   // Helper methods for creating functions that need this.clickEvents
@@ -148,18 +173,26 @@ class NetworkTracker {
       // Only record GA4 collect requests
       if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => url.includes(ga4Url))) {
         const timestamp = new Date().getTime();
-        const extractedParams = EventParser.extractEventParams(request.postData());
         
-          console.log(`📡 Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
-          this.networkEvents.push({
-            type: 'request',
-            timestamp,
-            url: request.url(),
-            method: request.method(),
-            headers: request.headers(),
-            postData: request.postData(),
-            ...extractedParams
-          });
+        // Extract parameters from both POST data and URL query parameters
+        const postParams = EventParser.extractEventParams(request.postData());
+        const urlParams = EventParser.extractEventParamsFromData(url.split('?')[1] || '', 'URL');
+        
+        // Merge parameters, with URL parameters taking precedence for event name
+        const extractedParams = { ...postParams, ...urlParams };
+        
+        console.log(`📡 Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
+        console.log(`📡 Event name extracted: ${extractedParams.eventName || 'unknown'}`);
+        
+        this.networkEvents.push({
+          type: 'request',
+          timestamp,
+          url: request.url(),
+          method: request.method(),
+          headers: request.headers(),
+          postData: request.postData(),
+          ...extractedParams
+        });
           console.log(`🔍 ARRAY DEBUG: Network events array now has ${this.networkEvents.length} events`);
       }
     });
@@ -405,6 +438,174 @@ class NetworkTracker {
     });
   }
 
+  /**
+   * Run form testing scenarios in isolation
+   */
+  async runFormTesting() {
+    if (!this.runFormTests) {
+      this.log('Form testing is disabled');
+      // Initialize empty results for reporting
+      this.formTestResults = {
+        fieldTests: [],
+        submissionTests: [],
+        summary: {
+          totalFieldTests: 0,
+          totalSubmissionTests: 0,
+          totalNetworkEvents: 0
+        }
+      };
+      return;
+    }
+
+    if (!this.formConfig) {
+      this.log('⏭️  Form testing skipped - no form configuration available');
+      this.log('💡 Add form configs to custom-config.js to enable form testing');
+      // Initialize empty results for reporting
+      this.formTestResults = {
+        fieldTests: [],
+        submissionTests: [],
+        summary: {
+          totalFieldTests: 0,
+          totalSubmissionTests: 0,
+          totalNetworkEvents: 0
+        }
+      };
+      return;
+    }
+
+    this.log('🧪 Starting form testing scenarios...');
+    
+    try {
+      // Create a separate network events array for form testing to avoid mixing with click events
+      const formNetworkEvents = [];
+      const formNetworkEventKeys = new Set();
+      
+      // Store current network event count to track form-specific events
+      const networkEventsBeforeForm = this.networkEvents.length;
+      this.log(`📊 Network events before form testing: ${networkEventsBeforeForm}`);
+      
+      // Use existing page state - no need to refresh since we already handled OneTrust/Pantheon
+      this.log('🎯 Using existing page state for form testing (no refresh needed)...');
+      
+      // Check if the form exists on the page
+      const formExists = await this.page.$(this.formConfig.formSelector);
+      if (!formExists) {
+        this.log(`⏭️  Form testing skipped - form not found on page (selector: ${this.formConfig.formSelector})`);
+        this.log('💡 The configured form may not be present on this page');
+        // Initialize empty results for reporting
+        this.formTestResults = {
+          fieldTests: [],
+          submissionTests: [],
+          summary: {
+            totalFieldTests: 0,
+            totalSubmissionTests: 0,
+            totalNetworkEvents: 0
+          }
+        };
+        return;
+      }
+      
+      this.log(`✅ Form found on page: ${this.formConfig.formSelector}`);
+      
+      // Set up form-specific network event tracking
+      const formNetworkHandler = (request) => {
+        const url = request.url();
+        if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => url.includes(ga4Url))) {
+          const timestamp = new Date().getTime();
+          
+          // Extract parameters from both POST data and URL query parameters
+          const postParams = EventParser.extractEventParams(request.postData());
+          const urlParams = EventParser.extractEventParamsFromData(url.split('?')[1] || '', 'URL');
+          
+          // Merge parameters, with URL parameters taking precedence for event name
+          const extractedParams = { ...postParams, ...urlParams };
+          
+          console.log(`📡 [FORM] Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
+          console.log(`📡 [FORM] Event name extracted: ${extractedParams.eventName || 'unknown'}`);
+          
+          formNetworkEvents.push({
+            type: 'request',
+            timestamp,
+            url: request.url(),
+            method: request.method(),
+            headers: request.headers(),
+            postData: request.postData(),
+            ...extractedParams
+          });
+          
+          // Also add to main array for overall reporting
+          this.networkEvents.push({
+            type: 'request',
+            timestamp,
+            url: request.url(),
+            method: request.method(),
+            headers: request.headers(),
+            postData: request.postData(),
+            source: 'form_testing',
+            ...extractedParams
+          });
+        }
+      };
+      
+      // Remove existing listener and add form-specific one
+      this.page.removeAllListeners('request');
+      this.page.on('request', formNetworkHandler);
+      
+      // Create form tester with isolated network events
+      const formTester = new FormTester(this.page, formNetworkEvents, this.formConfig);
+      await formTester.runAllTests();
+      
+      // Store results for reporting
+      this.formTestResults = formTester.getResults();
+      
+      const formNetworkEventsCount = formNetworkEvents.length;
+      this.log(`✅ Form testing completed. Form-specific network events: ${formNetworkEventsCount}`);
+      this.log(`📊 Results: ${JSON.stringify(this.formTestResults.summary)}`);
+      
+      // Restore original network event listener for any remaining operations
+      this.page.removeAllListeners('request');
+      this.page.on('request', request => {
+        const url = request.url();
+        if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => url.includes(ga4Url))) {
+          const timestamp = new Date().getTime();
+          
+          // Extract parameters from both POST data and URL query parameters
+          const postParams = EventParser.extractEventParams(request.postData());
+          const urlParams = EventParser.extractEventParamsFromData(url.split('?')[1] || '', 'URL');
+          
+          // Merge parameters, with URL parameters taking precedence for event name
+          const extractedParams = { ...postParams, ...urlParams };
+          
+          console.log(`📡 Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
+          console.log(`📡 Event name extracted: ${extractedParams.eventName || 'unknown'}`);
+          
+          this.networkEvents.push({
+            type: 'request',
+            timestamp,
+            url: request.url(),
+            method: request.method(),
+            headers: request.headers(),
+            postData: request.postData(),
+            ...extractedParams
+          });
+        }
+      });
+      
+    } catch (error) {
+      this.log(`❌ Error during form testing: ${error.message}`, 'error');
+      // Don't throw - continue with other tests
+    }
+  }
+
+  /**
+   * Helper method for logging with consistent format
+   */
+  log(message, type = 'info') {
+    const timestamp = new Date().toLocaleTimeString();
+    const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+    console.log(`${prefix} [${timestamp}] ${message}`);
+  }
+
   async run() {
     const startTime = Date.now();
     const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -449,6 +650,17 @@ class NetworkTracker {
           console.log('Starting click analysis');
           await this.clickElements();
       }
+
+
+      // Wait for all click-related network events to settle before form testing
+      console.log('⏳ Waiting for click events to settle before form testing...');
+      await this.page.waitForTimeout(CONFIG.NETWORK_WAIT * 2); // Extra wait time
+      
+      console.log('\n📝 === STARTING FORM TESTING PHASE ===');
+      if (this.formConfig) {
+        console.log(`📋 Form config loaded: ${Object.keys(FORM_CONFIGS).find(key => FORM_CONFIGS[key] === this.formConfig) || 'Unknown'}`);
+      }
+      await this.runFormTesting();
       
       // Wait a bit more to capture any final network events
       await this.page.waitForTimeout(CONFIG.NETWORK_WAIT);
@@ -469,6 +681,50 @@ class NetworkTracker {
       console.log(`Total GA4 network events: ${totalNetworkEvents}`);
       console.log(`Total network events: ${totalNetworkEvents}`);
       console.log(`📊 Total extracted events for ARD analysis: ${this.networkEvents.length}`);
+      
+      // Form testing summary
+      if (this.formTestResults && this.formTestResults.summary) {
+        console.log(`\n📋 === FORM TESTING SUMMARY ===`);
+        console.log(`Total field tests: ${this.formTestResults.summary.totalFieldTests}`);
+        console.log(`Total submission tests: ${this.formTestResults.summary.totalSubmissionTests}`);
+        console.log(`Form testing network events: ${this.formTestResults.summary.totalNetworkEvents}`);
+        
+        // Field test breakdown
+        if (this.formTestResults.fieldTests.length > 0) {
+          const successfulFieldTests = this.formTestResults.fieldTests.filter(test => test.result.success).length;
+          const failedFieldTests = this.formTestResults.fieldTests.filter(test => !test.result.success).length;
+          const fieldTestsWithErrors = this.formTestResults.fieldTests.filter(test => test.errorState.hasError).length;
+          const fieldTestsWithGA4 = this.formTestResults.fieldTests.filter(test => test.result.networkEvents && test.result.networkEvents.length > 0).length;
+          
+          console.log(`\n📊 === FIELD TESTING BREAKDOWN ===`);
+          console.log(`Successful field interactions: ${successfulFieldTests}`);
+          console.log(`Failed field interactions: ${failedFieldTests}`);
+          console.log(`Fields that showed validation errors: ${fieldTestsWithErrors}`);
+          console.log(`Field interactions that triggered GA4: ${fieldTestsWithGA4}`);
+        }
+        
+        // Submission test breakdown
+        if (this.formTestResults.submissionTests.length > 0) {
+          console.log(`\n📊 === SUBMISSION TESTING BREAKDOWN ===`);
+          this.formTestResults.submissionTests.forEach(test => {
+            if (test.testType === 'valid_submission') {
+              console.log(`  Valid submission: ${test.success ? 'SUCCESS' : 'FAILED'}`);
+            } else if (test.testType === 'empty_submission') {
+              const errorsFound = test.errorResults ? test.errorResults.filter(e => e.found).length : 0;
+              const totalExpected = test.errorResults ? test.errorResults.length : 0;
+              console.log(`  Empty submission: ${errorsFound}/${totalExpected} expected errors shown`);
+            } else if (test.testType === 'invalid_submission') {
+              const errorsFound = test.errorResults ? test.errorResults.filter(e => e.found).length : 0;
+              const totalExpected = test.errorResults ? test.errorResults.length : 0;
+              console.log(`  Invalid submission: ${errorsFound}/${totalExpected} validation errors shown`);
+            }
+            
+            if (test.networkEvents && test.networkEvents.length > 0) {
+              console.log(`    └─ Triggered ${test.networkEvents.length} GA4 event(s)`);
+            }
+          });
+        }
+      }
       
       // Debug: Show breakdown of event types
       const eventTypes = {};
@@ -537,7 +793,8 @@ class NetworkTracker {
         this.clickEvents,
         this.scrollEvents,
         this.createExtractEventsFromNetworkData(),
-        this.createFilterEventsByType()
+        this.createFilterEventsByType(),
+        this.formTestResults
       );
       console.log(`✅ Reports generated in ${Date.now() - reportStart}ms`);
       
@@ -556,7 +813,8 @@ class NetworkTracker {
           this.clickEvents,
           this.scrollEvents,
           this.createExtractEventsFromNetworkData(),
-          this.createFilterEventsByType()
+          this.createFilterEventsByType(),
+          this.formTestResults
         );
         console.log('✅ Report generated successfully despite error');
       } catch (reportError) {
@@ -590,17 +848,68 @@ if (clickPauseArg) {
   }
 }
 
+// Parse form testing options - now enabled by default
+const disableFormTests = args.includes('--no-forms');
+const runFormTests = !disableFormTests; // Default to true unless explicitly disabled
+
+let formConfigName = null;
+const formConfigArg = args.find(arg => arg.startsWith('--form-config='));
+if (formConfigArg) {
+  formConfigName = formConfigArg.split('=')[1];
+}
+
+// Get form configuration - use specified config or auto-detect
+let formConfig = null;
+if (runFormTests) {
+  if (formConfigName && FORM_CONFIGS[formConfigName]) {
+    formConfig = FORM_CONFIGS[formConfigName];
+    console.log(`📋 Using specified form config: ${formConfigName}`);
+  } else if (Object.keys(FORM_CONFIGS).length > 0) {
+    // Auto-detect first available config
+    const defaultConfigName = Object.keys(FORM_CONFIGS)[0];
+    formConfig = FORM_CONFIGS[defaultConfigName];
+    console.log(`📋 Auto-using form config: ${defaultConfigName}`);
+  } else {
+    console.log('⚠️  No form configurations available');
+    console.log('💡 Add form configs to custom-config.js to enable form testing');
+  }
+}
+
 if (!url) {
-  console.log(`Usage: node gtm-click-tracker.js <url> [--headless] [--click-pause=${CONFIG.CLICK_EVENT_DELAY}]`);
-  console.log('Example: node gtm-click-tracker.js https://www.example.com --headless');
-  console.log(`Example: node gtm-click-tracker.js https://www.example.com --click-pause=${CONFIG.CLICK_EVENT_DELAY}`);
+  console.log(`Usage: node gtm-tracker.js <url> [options]`);
+  console.log('');
+  console.log('🎯 GTM Comprehensive Tracker - Complete GA4 testing in one command');
+  console.log('');
+  console.log('Examples:');
+  console.log('  node gtm-tracker.js https://www.example.com');
+  console.log('  node gtm-tracker.js https://www.example.com --headless');
+  console.log('  node gtm-tracker.js https://www.example.com --form-config=neffy_consumer_signup');
+  console.log('  node gtm-tracker.js https://www.example.com --no-forms');
   console.log('');
   console.log('Options:');
-  console.log('  --headless     Run in headless mode');
-  console.log(`  --click-pause  Pause after each click in milliseconds (default: ${CONFIG.CLICK_EVENT_DELAY})`);
+  console.log('  --headless                Run in headless mode');
+  console.log(`  --click-pause=N           Pause after each action in milliseconds (default: ${CONFIG.CLICK_EVENT_DELAY})`);
+  console.log('  --form-config=NAME        Specify form configuration to use (auto-detects if not specified)');
+  console.log('  --no-forms                Disable form testing (forms are tested by default)');
+  console.log('');
+  console.log('🧪 Default Testing (Runs Automatically):');
+  console.log('  📄 Pageview tracking');
+  console.log('  📊 Scroll depth testing at 12 thresholds');
+  console.log('  🖱️  Click tracking on all interactive elements');
+  console.log('  📝 Form testing (if forms configured)');
+  console.log('  🌐 Complete GA4 network event analysis');
+  console.log('  📋 Unified HTML report with all results');
+  console.log('');
+  console.log('Available form configs:', Object.keys(FORM_CONFIGS).join(', ') || 'None configured');
   process.exit(1);
 }
 
 // Run the tracker
-const tracker = new NetworkTracker({ url, headless, clickPause });
+const tracker = new GTMTracker({ 
+  url, 
+  headless, 
+  clickPause, 
+  runFormTests, 
+  formConfig 
+});
 tracker.run();

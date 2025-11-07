@@ -85,10 +85,11 @@ const CONFIG = {
   },
 
   RUN_GA_CATEGORIES: {
-    click: true,
-    scroll: true,
-    page_view: true,
-    exit_modal: true,
+    click: false,
+    scroll: false,
+    page_view: false,
+    exit_modal: false,
+    // form testing is now controlled by command line args, not this config
   }
 
 };

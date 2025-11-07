@@ -1,13 +1,23 @@
-# GTM Click Tracker & ARD Analysis
+# GTM Comprehensive Tracker
 
-This project provides tools to automatically test Google Analytics 4 (GA4) event tracking on websites and analyze the results against an Analytics Requirements Document (ARD).
+This project provides a unified tool to automatically test Google Analytics 4 (GA4) event tracking on websites with comprehensive coverage of clicks, scrolls, forms, and more.
 
 ## Overview
 
-The project consists of two main components:
+**One Command. Complete Testing.** The GTM Tracker provides comprehensive GA4 testing in a single unified tool:
 
-1. **GTM Click Tracker** (`gtm-click-tracker.js`) - Automatically clicks all clickable elements on a webpage and captures GA4 network events
-2. **ARD Analysis** (`ard-analysis.js`) - Analyzes the captured network events against ARD.csv entries to identify matches and gaps
+- **Click Tracking** - Automatically tests all interactive elements
+- **Scroll Depth Testing** - Tests scroll tracking at multiple thresholds  
+- **Form Testing** - Comprehensive form validation and submission testing
+- **Network Analysis** - Captures and analyzes all GA4 network events
+- **Unified Reporting** - Single HTML report with all test results
+
+## Main Components
+
+1. **GTM Tracker** (`gtm-tracker.js`) - Unified testing tool for clicks, scrolls, forms, and GA4 analysis
+2. **Form Testing Engine** (`utils/form-tester.js`) - Comprehensive form testing with validation scenarios
+3. **Custom Form Configurations** (`custom-config.js`) - Configurable form testing scenarios
+4. **Browser Runner** (`browser-runner.js`) - Manual testing and development tool
 
 ## Prerequisites
 
@@ -53,31 +63,161 @@ node browser-runner.js https://www.example.com --viewport-width=1920 --viewport-
 - Handles cookie consent banners automatically
 - Keeps browser open for manual inspection (non-headless mode)
 
-### Step 1: Run GTM Click Tracker
+## Usage
 
-The GTM click tracker will automatically:
-- Navigate to the specified URL
-- Handle cookie consent banners (OneTrust)
-- Click all clickable elements
-- Capture GA4 network events
-- Generate comprehensive reports
+### Complete GTM Testing (One Command Does Everything)
+
+The GTM Tracker automatically runs **ALL** testing capabilities by default:
 
 ```bash
-# Basic usage
-node gtm-click-tracker.js https://www.example.com
+# Complete testing: pageviews, scrolls, clicks, AND forms (if configured)
+node gtm-tracker.js https://www.example.com
 
 # Run in headless mode (no browser window)
-node gtm-click-tracker.js https://www.example.com --headless
+node gtm-tracker.js https://www.example.com --headless
 
-# Customize click pause duration (default: 8000ms)
-node gtm-click-tracker.js https://www.example.com --click-pause=5000
+# Use specific form configuration
+node gtm-tracker.js https://your-form-page.com --form-config=neffy_consumer_signup
+
+# Disable form testing if needed
+node gtm-tracker.js https://www.example.com --no-forms
 ```
 
-**Options:**
-- `--headless`: Run browser in headless mode
-- `--click-pause=<milliseconds>`: Time to wait after each click (default: 8000ms)
+### What Gets Tested Automatically (Default Behavior)
 
-### Step 2: Run ARD Analysis
+**🎯 Always Runs:**
+- **Pageview Events** - Initial page load tracking
+- **Scroll Depth Testing** - Tests at 10%, 20%, 25%, 30%, 40%, 50%, 60%, 70%, 75%, 80%, 90%, 100%
+- **Click Testing** - All interactive elements (links, buttons, inputs, etc.)
+- **Form Testing** - Comprehensive form validation and submission testing (if forms configured)
+- **Network Event Capture** - All GA4 requests with timing analysis
+- **Cookie Consent Handling** - OneTrust and Pantheon banners
+
+**📝 Form Testing (Runs Automatically if Forms Configured):**
+1. **Individual Field Testing** - Fill each field and blur to test field-level validation
+2. **Valid Submission** - Complete form with valid data and submit
+3. **Empty Submission** - Submit empty form to trigger required field errors  
+4. **Invalid Data Submission** - Submit with invalid data to test validation rules
+
+### Command Options
+
+- `--headless`: Run browser in headless mode
+- `--click-pause=N`: Time to wait after each action in milliseconds (default: 3000ms)
+- `--form-config=NAME`: Specify form configuration to use (auto-detects first available if not specified)
+- `--no-forms`: Disable form testing (forms are tested by default)
+
+### List Available Configurations
+
+```bash
+# See all available form configurations and usage
+node gtm-tracker.js
+```
+
+## Creating Custom Form Configurations
+
+To test your own forms, create a configuration in `custom-config.js`:
+
+```javascript
+const FORM_CONFIGS = {
+  your_form_name: {
+    // Form identification
+    formSelector: 'form#your-form',
+    submitButtonSelector: '#submit-btn',
+    
+    // Define all form fields
+    fields: {
+      email: {
+        type: 'email',
+        selector: '#email',
+        testValues: {
+          valid: 'test@example.com',
+          invalid: 'invalid-email',
+          empty: ''
+        },
+        required: true
+      },
+      
+      phone: {
+        type: 'tel', 
+        selector: '#phone',
+        testValues: {
+          valid: '5551234567',
+          invalid: '123',
+          empty: ''
+        },
+        required: true
+      },
+      
+      // Radio buttons
+      user_type: {
+        type: 'radio',
+        selector: 'input[name="user_type"]',
+        options: ['individual', 'business'],
+        testValues: {
+          valid: 'individual',
+          invalid: null
+        },
+        required: true
+      },
+      
+      // Checkboxes
+      interests: {
+        type: 'checkbox',
+        selector: 'input[name="interests"]',
+        options: ['news', 'updates', 'promotions'],
+        testValues: {
+          valid: ['news', 'updates'],
+          invalid: []
+        },
+        required: true
+      },
+      
+      // Conditional fields (show/hide based on other fields)
+      business_name: {
+        type: 'text',
+        selector: '#business-name',
+        testValues: {
+          valid: 'Acme Corp',
+          invalid: ''
+        },
+        required: true,
+        conditional: {
+          dependsOn: 'user_type',
+          showWhen: 'business'
+        }
+      }
+    },
+    
+    // Test scenarios to run
+    testScenarios: {
+      individualFields: { enabled: true },
+      validSubmission: { 
+        enabled: true,
+        successIndicators: ['.success-message', 'text=Thank you']
+      },
+      emptySubmission: { 
+        enabled: true,
+        expectedErrors: ['#error-email', '#error-phone']
+      },
+      invalidSubmission: { 
+        enabled: true,
+        expectedErrors: ['#error-email', '#error-phone']
+      }
+    },
+    
+    // Timing configuration
+    timing: {
+      fieldFillDelay: 500,
+      blurDelay: 300,
+      submitDelay: 1000,
+      errorCheckDelay: 2000,
+      successCheckDelay: 3000
+    }
+  }
+};
+```
+
+### ARD Analysis (Legacy)
 
 After running the GTM click tracker, analyze the results against your ARD:
 
@@ -231,33 +371,43 @@ EVENT_PARAMS: {
 For troubleshooting, you can run the GTM click tracker in non-headless mode to see what's happening:
 
 ```bash
-node gtm-click-tracker.js https://www.example.com
+node gtm-tracker.js https://www.example.com
 ```
 
 ## Example Workflow
 
-1. **Prepare ARD**: Ensure your ARD.csv file is in the project directory
-2. **Run Click Tracker**: `node gtm-click-tracker.js https://your-site.com --headless`
-3. **Review Results**: Check the generated HTML report for initial findings
-4. **Run ARD Analysis**: `node ard-analysis.js`
-5. **Analyze Gaps**: Review the ARD analysis report to identify missing tracking
-6. **Update Implementation**: Address any gaps found in the analysis
+### Standard Website Testing
+1. **Run Complete Testing**: `node gtm-tracker.js https://your-site.com --headless`
+2. **Review Results**: Check the generated HTML report for comprehensive findings
+3. **Analyze Coverage**: Review click, scroll, and pageview tracking results
+
+### Form-Enabled Website Testing  
+1. **Configure Form**: Add your form configuration to `custom-config.js`
+2. **Run Complete Testing**: `node gtm-tracker.js https://your-form-site.com --form-tests --form-config=your_form_name`
+3. **Review Results**: Check both interaction testing and isolated form testing results
+4. **Validate Tracking**: Ensure all form interactions trigger appropriate GA4 events
 
 ## File Structure
 
 ```
 playwright-test/
-├── gtm-click-tracker.js    # Main click tracking tool
-├── ard-analysis.js         # ARD analysis tool
-├── ARD.csv                 # Analytics Requirements Document
-├── package.json            # Node.js dependencies
-├── README.md              # This file
-└── test-results/          # Generated reports (created automatically)
-    ├── network-events-*.html
-    ├── network-events-*.csv
-    ├── network-events-*.json
-    ├── ard-analysis-*.html
-    └── ard-analysis-*.csv
+├── gtm-tracker.js         # 🎯 Main unified testing tool (clicks, scrolls, forms, GA4)
+├── browser-runner.js      # Manual testing browser
+├── custom-config.js       # Form testing configurations
+├── config.js             # Main configuration settings
+├── utils/                # Utility modules
+│   ├── form-tester.js    # Form testing logic
+│   ├── report-generator.js # Report generation
+│   ├── event-parser.js   # Network event parsing
+│   ├── event-classifier.js # Event classification
+│   ├── element-handler.js # Element interaction handling
+│   └── network-handler.js # Network event handling
+├── package.json          # Node.js dependencies
+├── README.md            # This file
+└── test-results/        # Generated reports (created automatically)
+    ├── network-events-*.html  # Comprehensive test reports
+    ├── network-events-*.csv   # Click/scroll data export
+    └── network-events-*.json  # Raw data for analysis
 ```
 
 ## Contributing
