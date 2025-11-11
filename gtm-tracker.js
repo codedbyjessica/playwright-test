@@ -23,7 +23,11 @@
  * 
  * Examples:
  *   node gtm-tracker.js https://www.example.com --headless
- *   node gtm-tracker.js https://www.example.com --form-tests --form-config=neffy_consumer_signup
+ *   node gtm-tracker.js https://www.example.com --form-config=neffy_consumer_signup
+ * 
+ * Configuration:
+ *   Test categories controlled in config/main.js → RUN_GA_CATEGORIES
+ *   Form testing enabled/disabled via CONFIG.RUN_GA_CATEGORIES.forms
  * 
  * @author AI Assistant
  * @version 3.0
@@ -35,9 +39,11 @@ const EventParser = require('./utils/event-parser');
 const EventClassifier = require('./utils/event-classifier');
 const ElementHandler = require('./utils/element-handler');
 const NetworkHandler = require('./utils/network-handler');
-const FormTester = require('./utils/form-tester');
-const CONFIG = require('./config');
-const FORM_CONFIGS = require('./custom-config');
+const ClickTester = require('./testers/click-tester');
+const ScrollTester = require('./testers/scroll-tester');
+const FormTester = require('./testers/form-tester');
+const CONFIG = require('./config/main');
+const FORM_CONFIGS = require('./config/custom-forms');
 
 
 class GTMTracker {
@@ -45,12 +51,11 @@ class GTMTracker {
     this.options = {
       url: options.url || 'https://example.com',
       headless: options.headless !== false,
-      timeout: options.timeout || 30000,
-      clickPause: options.clickPause || CONFIG.CLICK_EVENT_DELAY,
+      timeout: options.timeout || CONFIG.GLOBAL.browserTimeout,
+      clickPause: options.clickPause || CONFIG.CLICK.eventDelay,
       ...options
     };
     
-    this.excludeSelectors = options.excludeSelectors || CONFIG.EXCLUDE_SELECTORS_FROM_CLICK.concat(CONFIG.EXIT_MODAL_SELECTORS);
     this.networkEvents = [];
     this.scrollEvents = [];
     this.clickEvents = [];
@@ -60,19 +65,32 @@ class GTMTracker {
     this.page = null;
     this.reportGenerator = new ReportGenerator();
     
-    // Form testing configuration - now enabled by default
+    // Form testing configuration - controlled by CONFIG.RUN_GA_CATEGORIES.forms
     this.formConfig = options.formConfig || this.detectDefaultFormConfig();
-    this.runFormTests = options.runFormTests !== false; // Default to true unless explicitly disabled
+    this.runFormTests = CONFIG.RUN_GA_CATEGORIES.forms;
   }
 
   /**
-   * Detect default form configuration (use first available config)
+   * Detect form configuration by matching page URL
+   */
+  detectFormConfigByPage(pageUrl) {
+    for (const [configName, config] of Object.entries(FORM_CONFIGS)) {
+      if (config.page && pageUrl.includes(config.page)) {
+        console.log(`📋 Matched form config "${configName}" for page: ${config.page}`);
+        return config;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Detect default form configuration (use first available config if no page match)
    */
   detectDefaultFormConfig() {
     const availableConfigs = Object.keys(FORM_CONFIGS);
     if (availableConfigs.length > 0) {
       const defaultConfig = availableConfigs[0];
-      console.log(`📋 Auto-detected form config: ${defaultConfig}`);
+      console.log(`📋 Using fallback form config: ${defaultConfig}`);
       return FORM_CONFIGS[defaultConfig];
     }
     return null;
@@ -115,22 +133,12 @@ class GTMTracker {
     );
   }
 
-  async waitForScrollNetworkEvents(scrollStartTime, scrollInfo) {
-    return NetworkHandler.waitForScrollNetworkEvents(
-      this.page, 
-      scrollStartTime, 
-      scrollInfo, 
-      this.networkEvents, 
-      this.matchedNetworkEventKeys, 
-      this.createExtractEventsFromNetworkData()
-    );
-  }
 
   async init() {
     console.log('Browser launched');
     this.browser = await chromium.launch({ 
       headless: this.options.headless,
-      timeout: 30000, // 30 second timeout for browser launch
+      timeout: CONFIG.GLOBAL.browserTimeout, // Timeout for browser launch
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -157,8 +165,8 @@ class GTMTracker {
     console.log('Creating browser context...');
     // Create an incognito context with a realistic user agent
     const context = await this.browser.newContext({
-      viewport: CONFIG.VIEWPORT,
-      userAgent: CONFIG.USER_AGENT
+      viewport: CONFIG.GLOBAL.viewport,
+      userAgent: CONFIG.GLOBAL.userAgent
     });
     
     console.log('Creating new page...');
@@ -171,7 +179,7 @@ class GTMTracker {
     this.page.on('request', request => {
       const url = request.url();
       // Only record GA4 collect requests
-      if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => url.includes(ga4Url))) {
+      if (CONFIG.GLOBAL.ga4Urls.some(ga4Url => url.includes(ga4Url))) {
         const timestamp = new Date().getTime();
         
         // Extract parameters from both POST data and URL query parameters
@@ -212,11 +220,11 @@ class GTMTracker {
     try {
       console.log('🍪 Looking for OneTrust cookie consent...');
       
-      const acceptBtn = await this.page.$(CONFIG.SELECTORS.ONETRUST);
+      const acceptBtn = await this.page.$(CONFIG.ONETRUST.acceptButtonSelector);
       if (acceptBtn) {
         await acceptBtn.click();
         console.log('✅ Clicked OneTrust I Agree button');
-        await this.page.waitForTimeout(CONFIG.NETWORK_WAIT);
+        await this.page.waitForTimeout(CONFIG.GLOBAL.networkWait);
         return true;
       }
       
@@ -229,213 +237,33 @@ class GTMTracker {
   }
 
   async clickElements() {
-    console.log('🖱️ Starting click events...');
+    const clickTester = new ClickTester(
+      this.page,
+      this.networkEvents,
+      this.matchedNetworkEventKeys,
+      this.createExtractEventsFromNetworkData()
+    );
     
-    try {
-      // Get all clickable elements with more comprehensive selectors
-      const clickableElements = await this.page.$$(CONFIG.SELECTORS.CLICKABLE);
-      
-      console.log(`Found ${clickableElements.length} clickable elements`);
-      
-      
-      for (let i = 0; i < clickableElements.length; i++) {
-        try {
-          const element = clickableElements[i];
-
-          // Get element info before clicking
-          const elementInfo = await ElementHandler.getElementInfo(element);
-          
-          // Check if element should be avoided using exclude selectors
-          let shouldSkip = false;
-          for (const selector of this.excludeSelectors) {
-            const matches = await element.evaluate((el, sel) => {
-              // Use CSS selector matching to check if element matches the selector
-              try {
-                // Check if this element matches the selector
-                return el.matches(sel);
-              } catch (e) {
-                // If selector is invalid, return false
-                return false;
-              }
-            }, selector);
-            
-            if (matches) {
-              console.log(`🚫 Skipping element: ${elementInfo.tagName} - "${elementInfo.textContent}" (matches: ${selector})`);
-              shouldSkip = true;
-              break;
-            }
-          }
-          
-          if (shouldSkip) {
-            continue;
-          }
-          
-          console.log(`🖱️ Clicking element ${i + 1}/${clickableElements.length}: ${elementInfo.tagName} - "${elementInfo.textContent}"`);
-          
-          // Record the current network event count and timestamp before clicking
-          const networkEventsBeforeClick = this.networkEvents.length;
-          const clickStartTime = new Date().getTime();
-          
-          // Record click event BEFORE clicking
-          const clickTimestamp = new Date().getTime();
-          this.clickEvents.push({
-            timestamp: clickTimestamp,
-            element: elementInfo,
-            action: 'click',
-            success: true,
-            error: null,
-            networkEventsBefore: networkEventsBeforeClick,
-            networkEventsAfter: null,
-            matchedNetworkEvents: []
-          });
-          
-          // Do regular click for all elements (more reliable)
-          console.log(`Clicking element ${i + 1}/${clickableElements.length}: ${elementInfo.tagName} "${elementInfo.textContent}"`);
-          
-          // For links, ensure they open in new tab/window
-          if (elementInfo.tagName === 'a' && elementInfo.href) {
-            await ElementHandler.handleLinkClick(element, elementInfo, this.page);
-          } else {
-            // For non-link elements, do regular click
-            await element.click({ timeout: CONFIG.CLICK_TIMEOUT });
-          }
-          
-          // Capture screenshot of the clicked element with context
-          let screenshotBuffer = null;
-          try {
-            // Wait a moment for any visual changes to settle
-            await this.page.waitForTimeout(100);
-            
-            // Get element bounding box to calculate expanded area
-            const boundingBox = await element.boundingBox();
-            if (boundingBox) {
-              const padding = CONFIG.SCREENSHOT_CONTEXT_PADDING;
-              const clip = {
-                x: Math.max(0, boundingBox.x - padding),
-                y: Math.max(0, boundingBox.y - padding),
-                width: Math.min(boundingBox.width + (padding * 2), await this.page.evaluate(() => window.innerWidth)),
-                height: Math.min(boundingBox.height + (padding * 2), await this.page.evaluate(() => window.innerHeight))
-              };
-              
-              screenshotBuffer = await this.page.screenshot({ 
-                type: 'png',
-                timeout: 4000,
-                clip: clip
-              });
-              console.log(`📸 Captured contextual screenshot for ${elementInfo.tagName} element (${clip.width}x${clip.height}px with ${padding}px padding)`);
-            } else {
-              // Fallback to element screenshot if bounding box fails
-              screenshotBuffer = await element.screenshot({ 
-                type: 'png',
-                timeout: 4000
-              });
-              console.log(`📸 Captured fallback screenshot for ${elementInfo.tagName} element`);
-            }
-          } catch (screenshotError) {
-            console.log(`⚠️ Could not capture screenshot: ${screenshotError.message}`);
-          }
-          
-          // Wait for network events within the time window
-          const newNetworkEvents = await this.waitForNetworkEvents(clickStartTime, elementInfo);
-          
-          // Update the click event with network event info and screenshot
-          const currentClickEvent = this.clickEvents[this.clickEvents.length - 1];
-          currentClickEvent.networkEventsAfter = this.networkEvents.length;
-          currentClickEvent.matchedNetworkEvents = newNetworkEvents;
-          currentClickEvent.screenshot = screenshotBuffer;
-          
-        } catch (clickError) {
-          await ElementHandler.recordFailedClick(clickableElements[i], clickError, i, this.clickEvents, this.networkEvents, this.page);
-          
-          // Continue with next element instead of crashing
-          continue;
-        }
-      }
-      
-      console.log(`✅ Click events completed. Recorded ${this.clickEvents.length} clicks`);
-      
-    } catch (error) {
-      console.log('⚠️ Error during click events:', error.message);
-      // Don't re-throw - let the main run() method handle it
-    }
+    await clickTester.runClickTests();
+    
+    // Get results and store them
+    const results = clickTester.getResults();
+    this.clickEvents = results.clickEvents;
   }
 
   async scrollPage() {
-    console.log('📜 Starting page scroll with network event tracking...');
-    
-    // Get page height
-    const pageHeight = await this.page.evaluate(() => document.body.scrollHeight);
-    console.log(`📏 Page height: ${pageHeight}px`);
-    
-    // dedupe and sort scroll thresholds
-    const scrollThresholds = CONFIG.SCROLL_THRESHOLDS.filter((threshold, index, self) => self.indexOf(threshold) === index).sort((a, b) => a - b);
-    
-    // Calculate scroll positions for each threshold (already sorted)
-    // Add buffer pixels to ensure we pass the threshold that triggers scroll events
-    const scrollPositions = scrollThresholds.map(threshold => ({
-      percentage: threshold,
-      scrollY: Math.round((threshold / 100) * pageHeight) + CONFIG.SCROLL_BUFFER_PX
-    }));
-    
-    // Record network events before scrolling starts
-    const networkEventsBeforeScroll = this.networkEvents.length;
-    
-    for (const position of scrollPositions) {
-      // Record scroll event BEFORE scrolling
-      const scrollStartTimestamp = new Date().getTime();
-      
-      const exactThresholdPx = Math.round((position.percentage / 100) * pageHeight);
-      console.log(`📜 Scrolling to ${position.scrollY}px (${position.percentage}% + ${CONFIG.SCROLL_BUFFER_PX}px buffer, threshold at ${exactThresholdPx}px)`);
-      
-      // Perform the scroll
-      await this.page.evaluate((y) => {
-        window.scrollTo(0, y);
-      }, position.scrollY);
-      
-      // Wait 5 seconds for potential delayed events before capturing
-      console.log(`⏳ Waiting ${CONFIG.SCROLL_EVENT_DELAY/1000}s for delayed events after ${position.percentage}% scroll...`);
-      await this.page.waitForTimeout(CONFIG.SCROLL_EVENT_DELAY);
-      
-      // Wait for any additional network events triggered by this scroll
-      const newNetworkEvents = await this.waitForScrollNetworkEvents(scrollStartTimestamp, {
-        percentage: position.percentage,
-        scrollY: position.scrollY,
-        action: 'scroll'
-      });
-      
-      // Record scroll event with network event matching
-      this.scrollEvents.push({
-        timestamp: scrollStartTimestamp,
-        scrollY: position.scrollY,
-        percentage: position.percentage,
-        action: 'scroll',
-        networkEventsBefore: networkEventsBeforeScroll,
-        networkEventsAfter: this.networkEvents.length,
-        matchedNetworkEvents: newNetworkEvents,
-        isThreshold: true // All positions are now defined thresholds
-      });
-    }
-    
-    // End of scroll sequence - no need to scroll back to top to avoid triggering additional events
-    
-    // Log summary statistics
-    console.log('✅ Sophisticated page scroll completed');
-    console.log(`📊 Recorded ${this.scrollEvents.length} scroll actions`);
-    
-    const scrollsWithNetworkEvents = this.scrollEvents.filter(scroll => 
-      scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0
+    const scrollTester = new ScrollTester(
+      this.page,
+      this.networkEvents,
+      this.matchedNetworkEventKeys,
+      this.createExtractEventsFromNetworkData()
     );
-    const thresholdScrolls = this.scrollEvents.filter(scroll => scroll.isThreshold);
     
-    console.log(`📊 Scroll actions that triggered network events: ${scrollsWithNetworkEvents.length}`);
-    console.log(`📊 Key scroll thresholds tested: ${thresholdScrolls.length}`);
+    await scrollTester.runScrollTests();
     
-    // Log which scroll percentages triggered events
-    scrollsWithNetworkEvents.forEach(scroll => {
-      if (scroll.matchedNetworkEvents.length > 0) {
-        console.log(`  📊 ${scroll.percentage}% scroll triggered ${scroll.matchedNetworkEvents.length} network event(s)`);
-      }
-    });
+    // Get results and store them
+    const results = scrollTester.getResults();
+    this.scrollEvents = results.scrollEvents;
   }
 
   /**
@@ -476,6 +304,17 @@ class GTMTracker {
     this.log('🧪 Starting form testing scenarios...');
     
     try {
+      // Try to match form config by page URL first
+      const currentUrl = this.page.url();
+      const pageMatchedConfig = this.detectFormConfigByPage(currentUrl);
+      
+      if (pageMatchedConfig) {
+        this.formConfig = pageMatchedConfig;
+        this.log(`✅ Using page-matched form config for URL: ${currentUrl}`);
+      } else if (this.formConfig) {
+        this.log(`⚠️  No page match found, using provided/default config`);
+      }
+      
       // Create a separate network events array for form testing to avoid mixing with click events
       const formNetworkEvents = [];
       const formNetworkEventKeys = new Set();
@@ -491,7 +330,7 @@ class GTMTracker {
       const formExists = await this.page.$(this.formConfig.formSelector);
       if (!formExists) {
         this.log(`⏭️  Form testing skipped - form not found on page (selector: ${this.formConfig.formSelector})`);
-        this.log('💡 The configured form may not be present on this page');
+        this.log(`💡 Current URL: ${currentUrl}`);
         // Initialize empty results for reporting
         this.formTestResults = {
           fieldTests: [],
@@ -510,7 +349,7 @@ class GTMTracker {
       // Set up form-specific network event tracking
       const formNetworkHandler = (request) => {
         const url = request.url();
-        if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => url.includes(ga4Url))) {
+        if (CONFIG.GLOBAL.ga4Urls.some(ga4Url => url.includes(ga4Url))) {
           const timestamp = new Date().getTime();
           
           // Extract parameters from both POST data and URL query parameters
@@ -552,7 +391,12 @@ class GTMTracker {
       this.page.on('request', formNetworkHandler);
       
       // Create form tester with isolated network events
-      const formTester = new FormTester(this.page, formNetworkEvents, this.formConfig);
+      const formTester = new FormTester(
+        this.page, 
+        formNetworkEvents, 
+        this.formConfig,
+        this.createExtractEventsFromNetworkData()
+      );
       await formTester.runAllTests();
       
       // Store results for reporting
@@ -566,7 +410,7 @@ class GTMTracker {
       this.page.removeAllListeners('request');
       this.page.on('request', request => {
         const url = request.url();
-        if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => url.includes(ga4Url))) {
+        if (CONFIG.GLOBAL.ga4Urls.some(ga4Url => url.includes(ga4Url))) {
           const timestamp = new Date().getTime();
           
           // Extract parameters from both POST data and URL query parameters
@@ -613,7 +457,7 @@ class GTMTracker {
       console.log(`🚀 [${executionId}] SCRIPT STARTED - PID: ${process.pid}`);
       console.log(`🌐 [${executionId}] Opening incognito window for: ${this.options.url}`);
       console.log(`🔧 [${executionId}] Execution mode: ${this.options.headless ? 'headless' : 'headed'}`);
-      console.log(`🔧 [${executionId}] Config delays - CLICK: ${CONFIG.CLICK_EVENT_DELAY}ms, SCROLL: ${CONFIG.SCROLL_EVENT_DELAY}ms, NETWORK_WAIT: ${CONFIG.NETWORK_WAIT}ms`);
+      console.log(`🔧 [${executionId}] Config delays - CLICK: ${CONFIG.CLICK.eventDelay}ms, SCROLL: ${CONFIG.SCROLL.eventDelay}ms, NETWORK_WAIT: ${CONFIG.GLOBAL.networkWait}ms`);
       const initStart = Date.now();
       await this.init();
       console.log(`✅ Browser initialized in ${Date.now() - initStart}ms`);
@@ -627,8 +471,8 @@ class GTMTracker {
       });
       console.log(`Page loaded in ${Date.now() - navStart}ms`);
       
-      console.log(`⏳ Waiting ${CONFIG.PAGE_LOAD_TIMEOUT}ms for page to stabilize...`);
-      await this.page.waitForTimeout(CONFIG.PAGE_LOAD_TIMEOUT);
+      console.log(`⏳ Waiting ${CONFIG.GLOBAL.pageLoadTimeout}ms for page to stabilize...`);
+      await this.page.waitForTimeout(CONFIG.GLOBAL.pageLoadTimeout);
 
       // Dismiss Pantheon
       await this.dismissPantheon();
@@ -641,8 +485,8 @@ class GTMTracker {
         console.log('Starting scroll analysis');
         await this.scrollPage();
         // Wait longer between scroll and click to ensure all scroll events are captured
-        console.log(`⏳ Waiting ${CONFIG.CLICK_EVENT_DELAY/1000} seconds between scroll and click actions...`);
-        await this.page.waitForTimeout(CONFIG.CLICK_EVENT_DELAY);
+        console.log(`⏳ Waiting ${CONFIG.CLICK.eventDelay/1000} seconds between scroll and click actions...`);
+        await this.page.waitForTimeout(CONFIG.CLICK.eventDelay);
       }
 
 
@@ -654,7 +498,7 @@ class GTMTracker {
 
       // Wait for all click-related network events to settle before form testing
       console.log('⏳ Waiting for click events to settle before form testing...');
-      await this.page.waitForTimeout(CONFIG.NETWORK_WAIT * 2); // Extra wait time
+      await this.page.waitForTimeout(CONFIG.GLOBAL.networkWait * 2); // Extra wait time
       
       console.log('\n📝 === STARTING FORM TESTING PHASE ===');
       if (this.formConfig) {
@@ -839,7 +683,7 @@ const headless = args.includes('--headless');
 console.log('🎯 PARSED ARGS - URL:', url, 'Headless:', headless);
 
 // Parse click pause option
-let clickPause = CONFIG.CLICK_EVENT_DELAY; // default
+let clickPause = CONFIG.CLICK.eventDelay; // default
 const clickPauseArg = args.find(arg => arg.startsWith('--click-pause='));
 if (clickPauseArg) {
   const pauseValue = parseInt(clickPauseArg.split('=')[1]);
@@ -848,10 +692,7 @@ if (clickPauseArg) {
   }
 }
 
-// Parse form testing options - now enabled by default
-const disableFormTests = args.includes('--no-forms');
-const runFormTests = !disableFormTests; // Default to true unless explicitly disabled
-
+// Parse form config option (optional - can specify which form config to use)
 let formConfigName = null;
 const formConfigArg = args.find(arg => arg.startsWith('--form-config='));
 if (formConfigArg) {
@@ -860,19 +701,17 @@ if (formConfigArg) {
 
 // Get form configuration - use specified config or auto-detect
 let formConfig = null;
-if (runFormTests) {
-  if (formConfigName && FORM_CONFIGS[formConfigName]) {
-    formConfig = FORM_CONFIGS[formConfigName];
-    console.log(`📋 Using specified form config: ${formConfigName}`);
-  } else if (Object.keys(FORM_CONFIGS).length > 0) {
-    // Auto-detect first available config
-    const defaultConfigName = Object.keys(FORM_CONFIGS)[0];
-    formConfig = FORM_CONFIGS[defaultConfigName];
-    console.log(`📋 Auto-using form config: ${defaultConfigName}`);
-  } else {
-    console.log('⚠️  No form configurations available');
-    console.log('💡 Add form configs to custom-config.js to enable form testing');
-  }
+if (formConfigName && FORM_CONFIGS[formConfigName]) {
+  formConfig = FORM_CONFIGS[formConfigName];
+  console.log(`📋 Using specified form config: ${formConfigName}`);
+} else if (Object.keys(FORM_CONFIGS).length > 0) {
+  // Auto-detect will happen in GTMTracker constructor based on page URL
+  const defaultConfigName = Object.keys(FORM_CONFIGS)[0];
+  formConfig = FORM_CONFIGS[defaultConfigName];
+  console.log(`📋 Auto-using form config: ${defaultConfigName}`);
+} else {
+  console.log('⚠️  No form configurations available');
+  console.log('💡 Add form configs to config/custom-forms.js to enable form testing');
 }
 
 if (!url) {
@@ -884,19 +723,18 @@ if (!url) {
   console.log('  node gtm-tracker.js https://www.example.com');
   console.log('  node gtm-tracker.js https://www.example.com --headless');
   console.log('  node gtm-tracker.js https://www.example.com --form-config=neffy_consumer_signup');
-  console.log('  node gtm-tracker.js https://www.example.com --no-forms');
   console.log('');
   console.log('Options:');
   console.log('  --headless                Run in headless mode');
-  console.log(`  --click-pause=N           Pause after each action in milliseconds (default: ${CONFIG.CLICK_EVENT_DELAY})`);
-  console.log('  --form-config=NAME        Specify form configuration to use (auto-detects if not specified)');
-  console.log('  --no-forms                Disable form testing (forms are tested by default)');
+  console.log(`  --click-pause=N           Pause after each action in milliseconds (default: ${CONFIG.CLICK.eventDelay})`);
+  console.log('  --form-config=NAME        Specify form configuration to use (auto-detects by URL if not specified)');
   console.log('');
-  console.log('🧪 Default Testing (Runs Automatically):');
-  console.log('  📄 Pageview tracking');
-  console.log('  📊 Scroll depth testing at 12 thresholds');
-  console.log('  🖱️  Click tracking on all interactive elements');
-  console.log('  📝 Form testing (if forms configured)');
+  console.log('🧪 Testing (Controlled in config/main.js → RUN_GA_CATEGORIES):');
+  console.log(`  📄 Pageview tracking: ${CONFIG.RUN_GA_CATEGORIES.page_view ? '✅' : '❌'}`);
+  console.log(`  📊 Scroll depth testing: ${CONFIG.RUN_GA_CATEGORIES.scroll ? '✅' : '❌'}`);
+  console.log(`  🖱️  Click tracking: ${CONFIG.RUN_GA_CATEGORIES.click ? '✅' : '❌'}`);
+  console.log(`  📝 Form testing: ${CONFIG.RUN_GA_CATEGORIES.forms ? '✅' : '❌'}`);
+  console.log(`  🚪 Exit modal: ${CONFIG.RUN_GA_CATEGORIES.exit_modal ? '✅' : '❌'}`);
   console.log('  🌐 Complete GA4 network event analysis');
   console.log('  📋 Unified HTML report with all results');
   console.log('');
@@ -909,7 +747,6 @@ const tracker = new GTMTracker({
   url, 
   headless, 
   clickPause, 
-  runFormTests, 
   formConfig 
 });
 tracker.run();

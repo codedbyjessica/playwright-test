@@ -8,7 +8,7 @@
  * @version 1.0
  */
 
-const CONFIG = require('../config');
+const CONFIG = require('../config/main');
 
 class EventClassifier {
   // Helper function to check if event is a scroll event
@@ -16,7 +16,7 @@ class EventClassifier {
     const eventName = event.eventName?.toLowerCase() || '';
     const rawData = event.rawData?.toLowerCase() || '';
     
-    return CONFIG.NETWORK_FILTERS.SCROLL_EVENT_KEYWORDS.some(keyword => 
+    return CONFIG.SCROLL.eventKeywords.some(keyword => 
       eventName.includes(keyword) || rawData.includes(keyword)
     );
   }
@@ -33,30 +33,44 @@ class EventClassifier {
 
   // Helper function to check if event should be excluded from click matching
   static shouldExcludeFromClickMatch(networkUrl, postData = '') {
-    // Check if event name includes "scroll"
-    if (postData) {
-      try {
+    // Extract event name from URL query string or POST data
+    let eventName = '';
+    
+    try {
+      // Try POST data first (more common for GA4)
+      if (postData) {
         const postParams = new URLSearchParams(postData);
-        const eventName = postParams.get('en') || '';
-        if (eventName.toLowerCase().includes('scroll')) {
-          return true;
-        }
-      } catch (e) {
-        // If parsing fails, fall back to URL check
+        eventName = (postParams.get('en') || '').toLowerCase();
       }
+      
+      // If not in POST data, try URL query string (for GET requests)
+      if (!eventName && networkUrl.includes('?')) {
+        const urlObj = new URL(networkUrl);
+        eventName = (urlObj.searchParams.get('en') || '').toLowerCase();
+      }
+    } catch (e) {
+      console.log(`⚠️ Error parsing event data: ${e.message}`);
+      return false;
     }
     
-    // Fall back to URL keyword check
-    return CONFIG.NETWORK_FILTERS.EXCLUDE_KEYWORDS_FROM_CLICK.some(keyword => 
-      networkUrl.toLowerCase().includes(keyword)
-    );
+    // Only check the event name parameter, not the entire URL
+    if (!eventName) {
+      return false; // No event name found, don't exclude
+    }
+    
+    // Check if event name contains any exclude keyword
+    return CONFIG.CLICK.excludeKeywords.some(keyword => {
+      const lowerKeyword = keyword.toLowerCase();
+      return eventName.includes(lowerKeyword);
+    });
   }
 
   // Helper function to find related trigger events
   static findRelatedTriggers(eventTimestamp, eventName = '', networkUrl = '', postData = '', clickEvents) {
     // For click matching, we now use the direct matching approach
     // where each click event has its own matchedNetworkEvents array
-    const relatedClick = (!EventClassifier.shouldExcludeFromClickMatch(networkUrl, postData)) ? clickEvents.find(click => {
+    // NOTE: We do NOT filter here - all events are captured, filtering happens at report display time
+    const relatedClick = clickEvents.find(click => {
       // Only match successful clicks (success === true)
       if (click.success !== true) {
         return false;
@@ -72,7 +86,7 @@ class EventClassifier {
       }
       
       return isMatched;
-    }) : null;
+    });
     
     return { relatedScroll: null, relatedClick };
   }

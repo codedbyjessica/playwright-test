@@ -10,7 +10,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const CONFIG = require('../config');
+const CONFIG = require('../config/main');
 
 class ReportGenerator {
   constructor() {
@@ -19,14 +19,33 @@ class ReportGenerator {
 
   // Helper function to generate parameter HTML from event data
   generateParameterHTML(event) {
-    return Object.entries(CONFIG.EVENT_PARAMS).map(([paramKey]) => {
+    const params = Object.entries(CONFIG.GLOBAL.eventParams).map(([paramKey, possibleParamNames]) => {
       const value = event[paramKey];
       if (value !== undefined && value !== null && value !== '') {
         const displayName = paramKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
-        return `<div><strong>${displayName}:</strong> ${value}</div>`;
+        
+        // Get the raw parameter name that was actually used
+        const rawParamName = event[`_rawParam_${paramKey}`] || possibleParamNames[0];
+        
+        return `<div><strong>${displayName}:</strong> ${value} <span style="color: #888; font-size: 0.85em; font-family: monospace;">(${rawParamName})</span></div>`;
       }
       return '';
     }).join('');
+    
+    // Add raw data source section
+    let rawDataHtml = '';
+    if (event.source) {
+      rawDataHtml = `
+        <div style="margin-top: 10px; padding: 8px; background: #f5f5f5; border-radius: 4px; border-left: 3px solid #9e9e9e;">
+          <div style="font-weight: bold; color: #666; margin-bottom: 4px;">📋 Raw Data Source (${event.source}):</div>
+          <div style="font-family: monospace; font-size: 0.75em; color: #555; word-break: break-all; max-height: 150px; overflow-y: auto;">
+            ${event.rawData || 'No raw data available'}
+          </div>
+        </div>
+      `;
+    }
+    
+    return params + rawDataHtml;
   }
 
   // Helper function to generate element info HTML
@@ -148,7 +167,7 @@ class ReportGenerator {
         <div class="url">
           <div class="accordion-header" onclick="toggleAccordion(this)">
             <span class="accordion-icon">▶</span>
-            <span class="url-preview">${event.url.length > CONFIG.URL_PREVIEW_LENGTH ? event.url.substring(0, CONFIG.URL_PREVIEW_LENGTH) + '...' : event.url}</span>
+            <span class="url-preview">${event.url.length > CONFIG.GLOBAL.urlPreviewLength ? event.url.substring(0, CONFIG.GLOBAL.urlPreviewLength) + '...' : event.url}</span>
           </div>
           <div class="accordion-content" style="display: none;">
             <div class="full-url">${event.url}</div>
@@ -167,7 +186,7 @@ class ReportGenerator {
             <br><strong>Extracted Events (${extractedEvents.length}):</strong>
             ${eventDetails}
           ` : ''}
-          ${!event.postData && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url)) && extractedEvents.length === 0 ? `
+          ${!event.postData && CONFIG.GLOBAL.ga4Urls.some(ga4Url => event.url.includes(ga4Url)) && extractedEvents.length === 0 ? `
             <br><strong>URL Parameters:</strong> ${event.url}
           ` : ''}
           ${event.requestUrl && event.requestUrl !== event.url ? `<br>Request URL: ${event.requestUrl}` : ''}
@@ -188,15 +207,24 @@ class ReportGenerator {
       return this.generatePageviewEventsHTML(nonFormNetworkEvents, extractEventsFromNetworkData, filterEventsByType, title, icon);
     }
     
+    // Check if this is the unmatched section (should be collapsed by default)
+    const isCollapsed = eventType === 'unmatched';
+    const displayStyle = isCollapsed ? 'display: none;' : '';
+    const arrowIcon = isCollapsed ? '▶' : '▼';
+    
     return `
       <div class="subsection">
-        <h3>${icon} ${title}</h3>
-        <div id="${eventType}EventsContainer">
-          ${nonFormNetworkEvents.map((event, idx) => {
-            const extractedEvents = extractEventsFromNetworkData(event);
-            const filteredEvents = filterEventsByType(extractedEvents, eventType);
-            return filteredEvents.length > 0 ? this.generateEventHTML(event, filteredEvents) : '';
-          }).join('')}
+        <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
+          <span class="accordion-icon">${arrowIcon}</span> ${icon} ${title}
+        </h3>
+        <div class="accordion-content" style="${displayStyle}">
+          <div id="${eventType}EventsContainer">
+            ${nonFormNetworkEvents.map((event, idx) => {
+              const extractedEvents = extractEventsFromNetworkData(event);
+              const filteredEvents = filterEventsByType(extractedEvents, eventType);
+              return filteredEvents.length > 0 ? this.generateEventHTML(event, filteredEvents) : '';
+            }).join('')}
+          </div>
         </div>
       </div>
     `;
@@ -268,9 +296,13 @@ class ReportGenerator {
 
     return `
       <div class="subsection">
-        <h3>${icon} ${title} (${pageviewEvents.length})</h3>
-        <div id="pageviewEventsContainer">
-          ${pageviewHtml}
+        <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
+          <span class="accordion-icon">▶</span> ${icon} ${title} (${pageviewEvents.length})
+        </h3>
+        <div class="accordion-content" style="display: none;">
+          <div id="pageviewEventsContainer">
+            ${pageviewHtml}
+          </div>
         </div>
       </div>
     `;
@@ -306,7 +338,7 @@ class ReportGenerator {
                   <div class="url" style="margin-top: 8px;">
                     <div class="accordion-header" onclick="toggleAccordion(this)" style="cursor: pointer; padding: 8px 12px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; font-weight: bold; color: #333; font-size: 0.9em;">
                       <span class="accordion-icon">▶</span>
-                      <span class="url-preview">${networkEvent.url.length > CONFIG.URL_PREVIEW_LENGTH ? networkEvent.url.substring(0, CONFIG.URL_PREVIEW_LENGTH) + '...' : networkEvent.url}</span>
+                      <span class="url-preview">${networkEvent.url.length > CONFIG.GLOBAL.urlPreviewLength ? networkEvent.url.substring(0, CONFIG.GLOBAL.urlPreviewLength) + '...' : networkEvent.url}</span>
                     </div>
                     <div class="accordion-content" style="display: none;">
                       <div class="full-url" style="padding: 8px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; font-size: 0.8em; color: #555; margin-top: 4px; font-family: monospace; word-break: break-all;">${networkEvent.url}</div>
@@ -323,7 +355,7 @@ class ReportGenerator {
                 <div class="url" style="margin-top: 8px;">
                   <div class="accordion-header" onclick="toggleAccordion(this)" style="cursor: pointer; padding: 8px 12px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; font-weight: bold; color: #333; font-size: 0.9em;">
                     <span class="accordion-icon">▶</span>
-                    <span class="url-preview">${networkEvent.url.length > CONFIG.URL_PREVIEW_LENGTH ? networkEvent.url.substring(0, CONFIG.URL_PREVIEW_LENGTH) + '...' : networkEvent.url}</span>
+                    <span class="url-preview">${networkEvent.url.length > CONFIG.GLOBAL.urlPreviewLength ? networkEvent.url.substring(0, CONFIG.GLOBAL.urlPreviewLength) + '...' : networkEvent.url}</span>
                   </div>
                   <div class="accordion-content" style="display: none;">
                     <div class="full-url" style="padding: 8px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; font-size: 0.8em; color: #555; margin-top: 4px; font-family: monospace; word-break: break-all;">${networkEvent.url}</div>
@@ -373,108 +405,6 @@ class ReportGenerator {
     if (!formTestResults || (!formTestResults.fieldTests.length && !formTestResults.submissionTests.length)) {
       return '<p>No form testing results available.</p>';
     }
-
-    // TEMPORARY DEBUG SECTION - Extract all GA4 events from form testing
-    const allFormGA4Events = [];
-    
-    // Collect from field tests (check multiple possible structures)
-    if (formTestResults.fieldTests) {
-      formTestResults.fieldTests.forEach(test => {
-        // Check test.result.networkEvents
-        if (test.result && test.result.networkEvents) {
-          test.result.networkEvents.forEach(event => {
-            allFormGA4Events.push({
-              source: 'field_test',
-              field: test.field,
-              testType: test.testType,
-              timestamp: event.timestamp,
-              url: event.url,
-              eventName: event.eventName || 'unknown',
-              params: event.extractedParams || {}
-            });
-          });
-        }
-        // Also check direct test.networkEvents
-        if (test.networkEvents) {
-          test.networkEvents.forEach(event => {
-            allFormGA4Events.push({
-              source: 'field_test_direct',
-              field: test.field,
-              testType: test.testType,
-              timestamp: event.timestamp,
-              url: event.url,
-              eventName: event.eventName || 'unknown',
-              params: event.extractedParams || {}
-            });
-          });
-        }
-      });
-    }
-    
-    // Collect from submission tests (check multiple possible structures)
-    if (formTestResults.submissionTests) {
-      formTestResults.submissionTests.forEach(test => {
-        // Check test.result.networkEvents
-        if (test.result && test.result.networkEvents) {
-          test.result.networkEvents.forEach(event => {
-            allFormGA4Events.push({
-              source: 'submission_test',
-              testType: test.testType,
-              timestamp: event.timestamp,
-              url: event.url,
-              eventName: event.eventName || 'unknown',
-              params: event.extractedParams || {}
-            });
-          });
-        }
-        // Also check direct test.networkEvents
-        if (test.networkEvents) {
-          test.networkEvents.forEach(event => {
-            allFormGA4Events.push({
-              source: 'submission_test_direct',
-              testType: test.testType,
-              timestamp: event.timestamp,
-              url: event.url,
-              eventName: event.eventName || 'unknown',
-              params: event.extractedParams || {}
-            });
-          });
-        }
-      });
-    }
-
-    // Get all captured events from debug array
-    const allCapturedEvents = formTestResults.allCapturedEvents || [];
-    
-    const debugHTML = `
-      <div style="background: #fff3cd; border: 2px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 8px;">
-        <h4 style="color: #856404; margin-top: 0;">🔍 TEMPORARY DEBUG: All Captured GA4 Events (${allCapturedEvents.length} total)</h4>
-        <p style="color: #856404; font-style: italic;">This section will be removed after debugging. Shows ALL network events captured during form testing.</p>
-        
-        ${allCapturedEvents.length === 0 ? 
-          '<p style="color: #d32f2f; font-weight: bold;">❌ NO EVENTS CAPTURED - Check network event capture logic!</p>' :
-          `<div style="background: white; padding: 10px; border-radius: 4px; max-height: 400px; overflow-y: auto;">
-            <h5>Event URLs (${allCapturedEvents.length} events):</h5>
-            ${allCapturedEvents.map((event, idx) => {
-              const isMatched = event.source.startsWith('MATCHED_');
-              const bgColor = isMatched ? '#e8f5e8' : '#f8f9fa';
-              const borderColor = isMatched ? '#4caf50' : '#dee2e6';
-              
-              return `
-                <div style="border-bottom: 1px solid #eee; padding: 5px 0; font-family: monospace; font-size: 0.8em; background: ${bgColor}; border-left: 3px solid ${borderColor}; padding-left: 8px; margin: 2px 0;">
-                  <strong>${idx + 1}.</strong> 
-                  <span style="color: ${isMatched ? '#2e7d32' : '#1976d2'}; font-weight: ${isMatched ? 'bold' : 'normal'};">[${event.source}]</span> 
-                  <span style="color: #666;">${new Date(event.timestamp).toLocaleTimeString()}</span> - 
-                  <span style="color: #d32f2f;">${event.eventName}</span>
-                  ${event.actionStart ? `<br><span style="color: #666; font-size: 0.7em;">Action Window: ${new Date(event.actionStart).toLocaleTimeString()} - ${new Date(event.actionEnd).toLocaleTimeString()}</span>` : ''}
-                  <br><span style="color: #333; word-break: break-all;">${event.url}</span>
-                </div>
-              `;
-            }).join('')}
-          </div>`
-        }
-      </div>
-    `;
 
     const fieldTestsHTML = formTestResults.fieldTests.length > 0 ? `
       <div class="form-test-subsection">
@@ -644,7 +574,6 @@ class ReportGenerator {
 
     return `
       <div class="form-testing-section">
-        ${debugHTML}
         ${fieldTestsHTML}
         ${submissionTestsHTML}
         
@@ -847,17 +776,28 @@ class ReportGenerator {
       fs.mkdirSync(testResultsDir, { recursive: true });
     }
     
-    // Generate CSV report
-    await this.generateCSVReport(testResultsDir, reportFilename, clickEvents, extractEventsFromNetworkData);
+    // Generate reports based on config
+    const enabledReports = [];
+    if (CONFIG.REPORT_GENERATION.html) enabledReports.push('HTML');
+    if (CONFIG.REPORT_GENERATION.csv) enabledReports.push('CSV');
+    if (CONFIG.REPORT_GENERATION.json) enabledReports.push('JSON');
+    
+    console.log(`\n📋 Generating ${enabledReports.join(', ')} report${enabledReports.length > 1 ? 's' : ''}...`);
+    
+    if (CONFIG.REPORT_GENERATION.csv) {
+      await this.generateCSVReport(testResultsDir, reportFilename, clickEvents, extractEventsFromNetworkData);
+    }
 
-    // Generate JSON report for ARD analysis
-    await this.generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, extractEventsFromNetworkData);
+    if (CONFIG.REPORT_GENERATION.json) {
+      await this.generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, extractEventsFromNetworkData);
+    }
 
-    const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults);
-
-    const htmlPath = path.join(testResultsDir, `${reportFilename}.html`);
-    fs.writeFileSync(htmlPath, html);
-    console.log(`\n🌐 HTML report saved to ${htmlPath}`);
+    if (CONFIG.REPORT_GENERATION.html) {
+      const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults);
+      const htmlPath = path.join(testResultsDir, `${reportFilename}.html`);
+      fs.writeFileSync(htmlPath, html);
+      console.log(`\n🌐 HTML report saved to ${htmlPath}`);
+    }
   }
 
   // Generate the main HTML content
@@ -891,7 +831,7 @@ class ReportGenerator {
         .header p { font-size: 1.1em; opacity: 0.9; }
         .stats { 
             display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(${CONFIG.STAT_CARD_MIN_WIDTH}px, 1fr)); 
+            grid-template-columns: repeat(auto-fit, minmax(${CONFIG.GLOBAL.statCardMinWidth}px, 1fr)); 
             gap: 20px; 
             margin-bottom: 30px; 
         }
@@ -1021,7 +961,7 @@ class ReportGenerator {
             font-size: 0.8em;
             white-space: pre-wrap;
             word-break: break-all;
-            max-height: ${CONFIG.MAX_PAYLOAD_HEIGHT}px;
+            max-height: ${CONFIG.GLOBAL.maxPayloadHeight}px;
             overflow-y: auto;
         }
         .payload-title {
@@ -1153,15 +1093,6 @@ class ReportGenerator {
             ` : ''}
         </div>
 
-        ${formTestResults && formTestResults.summary && (formTestResults.summary.totalFieldTests > 0 || formTestResults.summary.totalSubmissionTests > 0) ? `
-        <div class="section">
-            <h2>📝 Form Testing Results (Isolated)</h2>
-            <p style="color: #666; margin-bottom: 20px; font-style: italic;">
-                Form testing was conducted on a fresh page load to ensure isolation from click testing.
-            </p>
-            ${this.generateFormTestingHTML(formTestResults)}
-        </div>
-        ` : ''}
 
         <div class="section">
             <h2>🌐 Website Interaction Analysis</h2>
@@ -1192,12 +1123,20 @@ class ReportGenerator {
                             let matchingEventDetails = '';
                             
                             if (click.matchedNetworkEvents && click.matchedNetworkEvents.length > 0) {
-                                hasMatchingEvent = true;
-                                
                                 click.matchedNetworkEvents.forEach((networkEvent, eventIdx) => {
                                     const extractedEvents = extractEventsFromNetworkData(networkEvent);
                                     
                                     extractedEvents.forEach((evt, extractedEventIdx) => {
+                                        // Filter at the VERY last moment - skip excluded events
+                                        const eventName = (evt.eventName || '').toLowerCase();
+                                        const shouldExclude = CONFIG.CLICK.excludeKeywords.some(keyword => 
+                                            eventName.includes(keyword.toLowerCase())
+                                        );
+                                        if (shouldExclude) {
+                                            return; // Skip this event
+                                        }
+                                        
+                                        hasMatchingEvent = true;
                                         const parameterHtml = this.generateParameterHTML(evt);
                                         
                                         matchingEventDetails += `
@@ -1205,15 +1144,6 @@ class ReportGenerator {
                                                 <strong>✅ GA4 Event ${eventIdx + 1}.${extractedEventIdx + 1} (Direct Match):</strong><br>
                                                 ${parameterHtml}
                                                 <div><strong>Time After Click:</strong> ${networkEvent.timestamp - click.timestamp}ms</div>
-                                                <div class="url" style="margin-top: 8px;">
-                                                    <div class="accordion-header" onclick="toggleAccordion(this)" style="cursor: pointer; padding: 8px 12px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; font-weight: bold; color: #333; font-size: 0.9em;">
-                                                        <span class="accordion-icon">▶</span>
-                                                        <span class="url-preview">${networkEvent.url.length > CONFIG.URL_PREVIEW_LENGTH ? networkEvent.url.substring(0, CONFIG.URL_PREVIEW_LENGTH) + '...' : networkEvent.url}</span>
-                                                    </div>
-                                                    <div class="accordion-content" style="display: none;">
-                                                        <div class="full-url" style="padding: 8px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; font-size: 0.8em; color: #555; margin-top: 4px; font-family: monospace; word-break: break-all;">${networkEvent.url}</div>
-                                                    </div>
-                                                </div>
                                             </div>
                                         `;
                                     });
@@ -1246,12 +1176,23 @@ class ReportGenerator {
                 </div>
             </div>
 
+
+                    ${formTestResults && formTestResults.summary && (formTestResults.summary.totalFieldTests > 0 || formTestResults.summary.totalSubmissionTests > 0) ? `
+            <div class="section">
+                <h2>📝 Form Testing Results (Isolated)</h2>
+                ${this.generateFormTestingHTML(formTestResults)}
+            </div>
+            ` : ''}
+
             ${this.generateEventsSectionHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, 'unmatched', 'Unmatched Network Events', '❓')}
             
             <!-- Unmatched Click Events Section -->
             <div class="subsection">
-                <h3>❌ Failed Click Events</h3>
-                <div id="unmatchedClicksContainer">
+                <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
+                    <span class="accordion-icon">▶</span> ❌ Failed Click Events
+                </h3>
+                <div class="accordion-content" style="display: none;">
+                    <div id="unmatchedClicksContainer">
                     ${clickEvents
                         .filter(click => click.success === false)
                         .filter(failedClick => {
@@ -1289,6 +1230,7 @@ class ReportGenerator {
                                 </div>
                             `;
                         }).join('')}
+                    </div>
                 </div>
             </div>
         </div>

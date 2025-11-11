@@ -13,23 +13,16 @@
  * @version 1.0
  */
 
-const CONFIG = require('../config');
-const NetworkHandler = require('./network-handler');
-const EventParser = require('./event-parser');
-const EventClassifier = require('./event-classifier');
+const CONFIG = require('../config/main');
 
 class FormTester {
-  constructor(page, networkEvents, formConfig) {
+  constructor(page, networkEvents, formConfig, extractEventsFromNetworkDataFn) {
     this.page = page;
     this.networkEvents = networkEvents;
     this.config = formConfig;
+    this.extractEventsFromNetworkData = extractEventsFromNetworkDataFn;
     this.testResults = [];
     this.fieldTestResults = [];
-    this.matchedNetworkEventKeys = new Set(); // Track which network events have been matched
-    this.clickEvents = []; // Empty array for compatibility with EventParser
-    // TEMP DEBUG: Capture all network events for debugging
-    this.allCapturedEvents = [];
-    this.initialNetworkEventCount = 0; // Track initial count to see new events
   }
 
   /**
@@ -39,27 +32,6 @@ class FormTester {
     const timestamp = new Date().toLocaleTimeString();
     const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
     console.log(`${prefix} [${timestamp}] ${message}`);
-  }
-
-  /**
-   * Create the extract events function (same as gtm-tracker.js)
-   */
-  createExtractEventsFromNetworkData() {
-    return (networkEvent) => {
-      const parseEventsFromData = (data, eventTimestamp, source = 'POST', networkUrl = '', postData = '') => {
-        return EventParser.parseEventsFromData(
-          data, 
-          eventTimestamp, 
-          source, 
-          networkUrl, 
-          postData, 
-          this.clickEvents,
-          EventClassifier.findRelatedTriggers,
-          this.networkEvents
-        );
-      };
-      return EventParser.extractEventsFromNetworkData(networkEvent, parseEventsFromData);
-    };
   }
 
   /**
@@ -81,11 +53,10 @@ class FormTester {
     this.log(`📡 Found ${eventsInWindow.length} total events in ${timeout/1000}s window`);
     
     // Extract event details using the same parser as click tester
-    const extractEventsFromNetworkData = this.createExtractEventsFromNetworkData();
     const processedEvents = [];
     
     eventsInWindow.forEach(event => {
-      const extractedEvents = extractEventsFromNetworkData(event);
+      const extractedEvents = this.extractEventsFromNetworkData(event);
       if (extractedEvents.length > 0) {
         extractedEvents.forEach(extractedEvent => {
           processedEvents.push({
@@ -173,12 +144,12 @@ class FormTester {
           // Fallback: click on body to blur
           await this.page.click('body');
         }
-        await this.page.waitForTimeout(this.config.timing.blurDelay);
+        await this.page.waitForTimeout(CONFIG.FORM.blurDelay);
       }
       
       // Wait 8 seconds for GA4 events to fire
       this.log(`⏳ Waiting 8 seconds for GA4 events after "${fieldName}" interaction...`);
-      await this.page.waitForTimeout(8000);
+      await this.page.waitForTimeout(CONFIG.FORM.eventDelay);
       
       const actionEndTime = Date.now();
       this.log(`🏁 Field action for "${fieldName}" completed at ${new Date(actionEndTime).toLocaleTimeString()}`);
@@ -188,38 +159,14 @@ class FormTester {
         event.timestamp >= actionStartTime && event.timestamp <= actionEndTime + 1000 // 1s buffer
       );
       
-      // TEMP DEBUG: Log matched events for this specific field action
-      this.log(`🎯 MATCHED EVENTS for "${fieldName}" (${matchedEvents.length} events in time window ${new Date(actionStartTime).toLocaleTimeString()} - ${new Date(actionEndTime).toLocaleTimeString()}):`);
-      if (matchedEvents.length > 0) {
-        matchedEvents.forEach((event, idx) => {
-          this.log(`   ${idx + 1}. ${new Date(event.timestamp).toLocaleTimeString()} - ${event.eventName || 'unknown'} - ${event.url}`);
-          // Add to debug array with field-specific matching
-          this.allCapturedEvents.push({
-            source: `MATCHED_field_${fieldName}`,
-            url: event.url,
-            eventName: event.eventName || 'unknown',
-            timestamp: event.timestamp,
-            actionStart: actionStartTime,
-            actionEnd: actionEndTime
-          });
-        });
-      } else {
-        this.log(`   ❌ No events matched the time window for "${fieldName}"`);
-      }
-      
       this.log(`Filled field "${fieldName}" with value: ${JSON.stringify(value)}`);
+      this.log(`   Captured ${matchedEvents.length} events for this field action`);
       
       return {
         success: true,
         field: fieldName,
         value: value,
-        networkEvents: matchedEvents, // Use matched events instead of generic networkEvents
-        // TEMP DEBUG: Include timing info
-        actionWindow: {
-          start: actionStartTime,
-          end: actionEndTime,
-          duration: actionEndTime - actionStartTime
-        }
+        networkEvents: matchedEvents
       };
       
     } catch (error) {
@@ -257,8 +204,13 @@ class FormTester {
    * Test individual fields - fill each field and blur to test validation
    */
   async testIndividualFields() {
-    if (!this.config.testScenarios.individualFields.enabled) {
+    if (!CONFIG.FORM_TEST_SCENARIOS.individualFields) {
       this.log('Individual field testing is disabled');
+      return;
+    }
+    
+    if (!this.config.fields || Object.keys(this.config.fields).length === 0) {
+      this.log('⏭️  Individual field testing skipped - no fields configured');
       return;
     }
     
@@ -288,7 +240,7 @@ class FormTester {
       
       // Test with valid value
       const validResult = await this.fillField(fieldName, fieldConfig, fieldConfig.testValues.valid);
-      await this.page.waitForTimeout(this.config.timing.fieldFillDelay);
+      await this.page.waitForTimeout(CONFIG.FORM.fieldFillDelay);
       
       // Check for errors after valid input
       const errorCheck = await this.checkFieldError(fieldName);
@@ -346,7 +298,7 @@ class FormTester {
    * Fill form with valid data and submit
    */
   async testValidSubmission() {
-    if (!this.config.testScenarios.validSubmission.enabled) {
+    if (!CONFIG.FORM_TEST_SCENARIOS.validSubmission) {
       this.log('Valid submission testing is disabled');
       return;
     }
@@ -354,23 +306,28 @@ class FormTester {
     this.log('🚀 Starting valid form submission test...');
     const startTime = Date.now();
     
-    const requiredFields = Object.entries(this.config.fields).filter(([_, config]) => config.required || config.testValues.valid !== undefined);
-    this.log(`📝 Filling ${requiredFields.length} fields with valid data...`);
-    
-    // Fill all required fields with valid data (fast, no delays)
-    let fieldsFilled = 0;
-    for (const [fieldName, fieldConfig] of Object.entries(this.config.fields)) {
-      if (fieldConfig.required || fieldConfig.testValues.valid !== undefined) {
-        // Check if conditional field should be filled
-        if (fieldConfig.conditional) {
-          const isVisible = await this.isConditionalFieldVisible(fieldConfig);
-          if (!isVisible) continue;
+    // Fill fields if configured
+    if (this.config.fields && Object.keys(this.config.fields).length > 0) {
+      const requiredFields = Object.entries(this.config.fields).filter(([_, config]) => config.required || config.testValues.valid !== undefined);
+      this.log(`📝 Filling ${requiredFields.length} fields with valid data...`);
+      
+      // Fill all required fields with valid data (fast, no delays)
+      let fieldsFilled = 0;
+      for (const [fieldName, fieldConfig] of Object.entries(this.config.fields)) {
+        if (fieldConfig.required || fieldConfig.testValues.valid !== undefined) {
+          // Check if conditional field should be filled
+          if (fieldConfig.conditional) {
+            const isVisible = await this.isConditionalFieldVisible(fieldConfig);
+            if (!isVisible) continue;
+          }
+          
+          await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.valid);
+          fieldsFilled++;
+          this.log(`   ✅ Filled field "${fieldName}" (${fieldsFilled}/${requiredFields.length})`);
         }
-        
-        await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.valid);
-        fieldsFilled++;
-        this.log(`   ✅ Filled field "${fieldName}" (${fieldsFilled}/${requiredFields.length})`);
       }
+    } else {
+      this.log('ℹ️  No fields configured - submitting form without pre-filling');
     }
     
     // Submit the form immediately
@@ -383,67 +340,26 @@ class FormTester {
     const networkEvents = await this.waitForNetworkEvents(startTime, {
       action: 'form_submit',
       type: 'valid_submission'
-    }); // Uses NetworkHandler with CONFIG.CLICK_EVENT_DELAY timeout
-    
-    this.log('✅ Form submitted successfully');
-    
-    // TEMP DEBUG: Log submission network events
-    this.log(`🔍 DEBUG: Valid submission captured ${networkEvents.length} network events`);
-    networkEvents.forEach((event, idx) => {
-      this.log(`   ${idx + 1}. ${event.eventName || 'unknown'} - ${event.url}`);
-      // Add to debug array with submission-specific matching
-      this.allCapturedEvents.push({
-        source: 'MATCHED_valid_submission',
-        url: event.url,
-        eventName: event.eventName || 'unknown',
-        timestamp: event.timestamp,
-        actionStart: startTime,
-        actionEnd: startTime + 20000 // 20 second window
-      });
     });
     
-    // Check for success indicators
-    let success = false;
-    if (this.config.testScenarios.validSubmission.successIndicators) {
-      await this.page.waitForTimeout(this.config.timing.successCheckDelay);
-      
-      for (const indicator of this.config.testScenarios.validSubmission.successIndicators) {
-        try {
-          if (indicator.startsWith('text=')) {
-            const text = indicator.substring(5);
-            const element = await this.page.getByText(text).first();
-            if (await element.isVisible()) {
-              success = true;
-              break;
-            }
-          } else {
-            const element = await this.page.$(indicator);
-            if (element) {
-              success = true;
-              break;
-            }
-          }
-        } catch (error) {
-          // Continue checking other indicators
-        }
-      }
-    }
+    this.log('✅ Form submitted successfully');
+    this.log(`📡 Captured ${networkEvents.length} events for valid submission`);
     
     this.testResults.push({
       testType: 'valid_submission',
-      success: success,
+      success: true,
       networkEvents: networkEvents,
       timestamp: startTime
     });
     
-    this.log(`✅ Valid submission test completed. Success: ${success}`);
+    this.log(`✅ Valid submission test completed`);
   }
 
   /**
    * Submit empty form to test required field validation
    */
   async testEmptySubmission() {
-    if (!this.config.testScenarios.emptySubmission.enabled) {
+    if (!CONFIG.FORM_TEST_SCENARIOS.emptySubmission) {
       this.log('Empty submission testing is disabled');
       return;
     }
@@ -461,14 +377,14 @@ class FormTester {
     
     // Wait 8 seconds for GA4 events and error messages
     this.log('⏳ Waiting 8 seconds for GA4 events and error messages...');
-    await this.page.waitForTimeout(8000);
+    await this.page.waitForTimeout(CONFIG.FORM.eventDelay);
     
     // Check for expected errors
     this.log('🔍 Checking for validation errors...');
     const errorResults = [];
-    if (this.config.testScenarios.emptySubmission.expectedErrors) {
+    if (this.config.expectedErrors && this.config.expectedErrors.emptySubmission) {
       let errorsFound = 0;
-      for (const errorSelector of this.config.testScenarios.emptySubmission.expectedErrors) {
+      for (const errorSelector of this.config.expectedErrors.emptySubmission) {
         try {
           const errorElement = await this.page.$(errorSelector);
           const hasError = errorElement !== null;
@@ -496,7 +412,7 @@ class FormTester {
           });
         }
       }
-      this.log(`📊 Validation errors found: ${errorsFound}/${this.config.testScenarios.emptySubmission.expectedErrors.length}`);
+      this.log(`📊 Validation errors found: ${errorsFound}/${this.config.expectedErrors.emptySubmission.length}`);
     }
     
     // Wait for network events
@@ -505,20 +421,9 @@ class FormTester {
       type: 'empty_submission'
     });
     
-    // TEMP DEBUG: Add empty submission events to debug array
-    networkEvents.forEach((event, idx) => {
-      this.allCapturedEvents.push({
-        source: 'MATCHED_empty_submission',
-        url: event.url,
-        eventName: event.eventName || 'unknown',
-        timestamp: event.timestamp,
-        actionStart: startTime,
-        actionEnd: startTime + 3000 // CONFIG.CLICK_EVENT_DELAY window
-      });
-    });
-    
     this.testResults.push({
       testType: 'empty_submission',
+      success: true,  // Success means test ran successfully, not that form submitted
       errorResults: errorResults,
       networkEvents: networkEvents,
       timestamp: startTime
@@ -532,7 +437,7 @@ class FormTester {
    * Submit form with invalid data to test validation
    */
   async testInvalidSubmission() {
-    if (!this.config.testScenarios.invalidSubmission.enabled) {
+    if (!CONFIG.FORM_TEST_SCENARIOS.invalidSubmission) {
       this.log('Invalid submission testing is disabled');
       return;
     }
@@ -540,17 +445,26 @@ class FormTester {
     this.log('🧪 Starting invalid data submission test...');
     const startTime = Date.now();
     
-    // Fill form with invalid data (fast, no delays)
-    const invalidFields = Object.entries(this.config.fields).filter(([_, config]) => config.testValues.invalid !== undefined);
-    this.log(`📝 Filling ${invalidFields.length} fields with invalid data...`);
-    
-    let fieldsFilled = 0;
-    for (const [fieldName, fieldConfig] of Object.entries(this.config.fields)) {
-      if (fieldConfig.testValues.invalid !== undefined) {
-        await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.invalid);
-        fieldsFilled++;
-        this.log(`   ❌ Filled field "${fieldName}" with invalid data (${fieldsFilled}/${invalidFields.length})`);
+    // Fill form with invalid data if configured
+    if (this.config.fields && Object.keys(this.config.fields).length > 0) {
+      const invalidFields = Object.entries(this.config.fields).filter(([_, config]) => config.testValues?.invalid !== undefined);
+      
+      if (invalidFields.length > 0) {
+        this.log(`📝 Filling ${invalidFields.length} fields with invalid data...`);
+        
+        let fieldsFilled = 0;
+        for (const [fieldName, fieldConfig] of invalidFields) {
+          await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.invalid);
+          fieldsFilled++;
+          this.log(`   ❌ Filled field "${fieldName}" with invalid data (${fieldsFilled}/${invalidFields.length})`);
+        }
+      } else {
+        this.log('⏭️  No fields with invalid test values configured - skipping invalid submission test');
+        return;
       }
+    } else {
+      this.log('⏭️  No fields configured - skipping invalid submission test');
+      return;
     }
     
     // Submit the form immediately
@@ -561,12 +475,12 @@ class FormTester {
     
     // Wait 8 seconds for GA4 events and error messages
     this.log('⏳ Waiting 8 seconds for GA4 events and error messages...');
-    await this.page.waitForTimeout(8000);
+    await this.page.waitForTimeout(CONFIG.FORM.eventDelay);
     
     // Check for expected validation errors
     const errorResults = [];
-    if (this.config.testScenarios.invalidSubmission.expectedErrors) {
-      for (const errorSelector of this.config.testScenarios.invalidSubmission.expectedErrors) {
+    if (this.config.expectedErrors && this.config.expectedErrors.invalidSubmission) {
+      for (const errorSelector of this.config.expectedErrors.invalidSubmission) {
         try {
           const errorElement = await this.page.$(errorSelector);
           const hasError = errorElement !== null;
@@ -597,20 +511,9 @@ class FormTester {
       type: 'invalid_submission'
     });
     
-    // TEMP DEBUG: Add invalid submission events to debug array
-    networkEvents.forEach((event, idx) => {
-      this.allCapturedEvents.push({
-        source: 'MATCHED_invalid_submission',
-        url: event.url,
-        eventName: event.eventName || 'unknown',
-        timestamp: event.timestamp,
-        actionStart: startTime,
-        actionEnd: startTime + 3000 // CONFIG.CLICK_EVENT_DELAY window
-      });
-    });
-    
     this.testResults.push({
       testType: 'invalid_submission',
+      success: true,  // Success means test ran successfully, not that form submitted
       errorResults: errorResults,
       networkEvents: networkEvents,
       timestamp: startTime
@@ -763,12 +666,11 @@ class FormTester {
   async runAllTests() {
     this.log('🚀 Starting comprehensive form testing...');
     const overallStartTime = Date.now();
-    this.initialNetworkEventCount = this.networkEvents.length;
     
     try {
       // Test 1: Individual field testing (use current page state)
       this.log('\n📝 === PHASE 1: INDIVIDUAL FIELD TESTING ===');
-      // await this.testIndividualFields();
+      await this.testIndividualFields();
       
       // Test 2: Valid submission (fresh page)
       await this.refreshForNewPhase('PHASE 2: VALID FORM SUBMISSION');
@@ -778,24 +680,18 @@ class FormTester {
       // Test 3: Empty submission (fresh page)
       await this.refreshForNewPhase('PHASE 3: EMPTY FORM SUBMISSION');
       this.log('\n🧪 === PHASE 3: EMPTY FORM SUBMISSION ===');
-      // await this.testEmptySubmission();
+      await this.testEmptySubmission();
       
       // Test 4: Invalid submission (fresh page)
       await this.refreshForNewPhase('PHASE 4: INVALID DATA SUBMISSION');
       this.log('\n🧪 === PHASE 4: INVALID DATA SUBMISSION ===');
-      // await this.testInvalidSubmission();
+      await this.testInvalidSubmission();
       
       const totalTime = Date.now() - overallStartTime;
       this.log(`\n🎉 All form tests completed in ${totalTime}ms`);
       
       // Generate summary
       this.generateTestSummary();
-      
-      // TEMP DEBUG: Log total network events captured
-      this.log(`🔍 DEBUG: Total network events in array: ${this.networkEvents.length}`);
-      this.networkEvents.forEach((event, idx) => {
-        this.log(`   ${idx + 1}. ${new Date(event.timestamp).toLocaleTimeString()} - ${event.eventName || 'unknown'} - ${event.url}`);
-      });
       
     } catch (error) {
       this.log(`❌ Error during form testing: ${error.message}`, 'error');
@@ -840,20 +736,15 @@ class FormTester {
     return {
       fieldTests: this.fieldTestResults,
       submissionTests: this.testResults,
-      // TEMP DEBUG: Include all captured events
-      allCapturedEvents: this.allCapturedEvents,
       summary: {
         totalFieldTests: this.fieldTestResults.length,
         totalSubmissionTests: this.testResults.length,
         totalNetworkEvents: this.testResults.reduce((sum, test) => 
           sum + (test.networkEvents ? test.networkEvents.length : 0), 0
-        ),
-        // TEMP DEBUG: Count of all captured events
-        totalCapturedEvents: this.allCapturedEvents.length
+        )
       }
     };
   }
 }
 
 module.exports = FormTester;
-

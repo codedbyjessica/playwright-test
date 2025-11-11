@@ -8,16 +8,16 @@
  * @version 1.0
  */
 
-const CONFIG = require('../config');
+const CONFIG = require('../config/main');
 
 class EventParser {
   // Helper function to get first matching parameter value
   static getParamFirstMatch(params, paramKeys) {
     for (const key of paramKeys) {
       const value = params.get(key);
-      if (value !== null && value !== undefined) return value;
+      if (value !== null && value !== undefined) return { value, paramName: key };
     }
-    return '';
+    return { value: '', paramName: null };
   }
 
   // Helper function to extract event parameters from POST data
@@ -28,8 +28,10 @@ class EventParser {
       try {
         const postParams = new URLSearchParams(postData);
         // Dynamically extract all configured parameters
-        Object.entries(CONFIG.EVENT_PARAMS).forEach(([key, paramKeys]) => {
-          result[key] = EventParser.getParamFirstMatch(postParams, paramKeys);
+        Object.entries(CONFIG.GLOBAL.eventParams).forEach(([key, paramKeys]) => {
+          const { value, paramName } = EventParser.getParamFirstMatch(postParams, paramKeys);
+          result[key] = value;
+          result[`_rawParam_${key}`] = paramName; // Store which parameter was actually used
         });
       } catch (e) {
         console.log('⚠️  Error parsing POST data:', e.message);
@@ -45,8 +47,10 @@ class EventParser {
     const result = {};
     
     // Dynamically extract all configured parameters
-    Object.entries(CONFIG.EVENT_PARAMS).forEach(([key, paramKeys]) => {
-      result[key] = EventParser.getParamFirstMatch(params, paramKeys);
+    Object.entries(CONFIG.GLOBAL.eventParams).forEach(([key, paramKeys]) => {
+      const { value, paramName } = EventParser.getParamFirstMatch(params, paramKeys);
+      result[key] = value;
+      result[`_rawParam_${key}`] = paramName; // Store which parameter was actually used
     });
     
     return result;
@@ -139,7 +143,7 @@ class EventParser {
       extractedEvents = parseEventsFromDataFn(networkEvent.postData, networkEvent.timestamp, 'POST', networkEvent.url, networkEvent.postData);
     }
     
-    if (extractedEvents.length === 0 && CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => networkEvent.url.includes(ga4Url))) {
+    if (extractedEvents.length === 0 && CONFIG.GLOBAL.ga4Urls.some(ga4Url => networkEvent.url.includes(ga4Url))) {
       extractedEvents = parseEventsFromDataFn(networkEvent.url, networkEvent.timestamp, 'URL', networkEvent.url, networkEvent.postData || '');
     }
     

@@ -93,6 +93,7 @@ downloads/
 # Large CSV Files (optional - uncomment if you have large data files)
 # *.csv
 # ARD.csv
+*.csv
 
 # Temporary Files Created During Development
 temp-*

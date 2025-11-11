@@ -8,7 +8,7 @@
  * @version 1.0
  */
 
-const CONFIG = require('../config');
+const CONFIG = require('../config/main');
 
 class ElementHandler {
   // Helper function to get element info
@@ -74,11 +74,11 @@ class ElementHandler {
     await element.click({ 
       button: 'left', 
       modifiers: [modifier],
-      timeout: CONFIG.CLICK_TIMEOUT 
+      timeout: CONFIG.CLICK.timeout 
     });
     
     // Wait a moment for the new tab to open
-    await page.waitForTimeout(CONFIG.WAIT_AFTER_CLICK);
+    await page.waitForTimeout(CONFIG.CLICK.waitAfterClick);
     
     // Check if a new page was opened by looking at all pages
     const pages = page.context().pages();
@@ -106,8 +106,8 @@ class ElementHandler {
         // Get element bounding box to calculate expanded area
         const boundingBox = await element.boundingBox();
         if (boundingBox) {
-          const CONFIG = require('../config.js');
-          const padding = CONFIG.SCREENSHOT_CONTEXT_PADDING;
+          const CONFIG = require('../config/main.js');
+          const padding = CONFIG.GLOBAL.screenshotContextPadding;
           const clip = {
             x: Math.max(0, boundingBox.x - padding),
             y: Math.max(0, boundingBox.y - padding),

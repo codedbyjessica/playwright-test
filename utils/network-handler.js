@@ -8,7 +8,7 @@
  * @version 1.0
  */
 
-const CONFIG = require('../config');
+const CONFIG = require('../config/main');
 
 class NetworkHandler {
   // Helper function to create event key for deduplication
@@ -27,7 +27,7 @@ class NetworkHandler {
   // Helper function to count GA4 vs other events
   static categorizeEvents(events) {
     const ga4Events = events.filter(event => 
-      CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url))
+      CONFIG.GLOBAL.ga4Urls.some(ga4Url => event.url.includes(ga4Url))
     );
     const otherEvents = events.length - ga4Events.length;
     return { ga4Events, otherEvents };
@@ -46,7 +46,7 @@ class NetworkHandler {
             const actionText = actionType === 'click' ? 'click' : `${actionInfo.percentage}% scroll`;
             console.log(`    ${icon} GA4 Event: ${evt.eventName} - ${evt.eventAction} - ${evt.eventLabel} (${timeAfterAction}ms after ${actionText})`);
           });
-        } else if (CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => event.url.includes(ga4Url))) {
+        } else if (CONFIG.GLOBAL.ga4Urls.some(ga4Url => event.url.includes(ga4Url))) {
           const icon = actionType === 'click' ? '🔵' : '📊';
           const actionText = actionType === 'click' ? 'click' : `${actionInfo.percentage}% scroll`;
           console.log(`    ${icon} GA4 Request: ${event.url} (${timeAfterAction}ms after ${actionText})`);
@@ -60,10 +60,10 @@ class NetworkHandler {
 
   // Helper function to wait for network events after a click
   static async waitForNetworkEvents(page, clickStartTime, elementInfo, networkEvents, matchedNetworkEventKeys, extractEventsFromNetworkDataFn) {
-    console.log(`⏳ Waiting ${CONFIG.CLICK_EVENT_DELAY/1000}s for network events after clicking "${elementInfo.textContent}"...`);
+    console.log(`⏳ Waiting ${CONFIG.CLICK.eventDelay/1000}s for network events after clicking "${elementInfo.textContent}"...`);
     
     // Wait the full event delay time
-    await page.waitForTimeout(CONFIG.CLICK_EVENT_DELAY);
+    await page.waitForTimeout(CONFIG.CLICK.eventDelay);
     
     // Find all network events that occurred within the time window
     const newNetworkEvents = networkEvents.filter(networkEvent => {
@@ -74,8 +74,8 @@ class NetworkHandler {
       // 1. Occurred after the click (positive timeAfterClick)
       // 2. Are within our time window
       // 3. Haven't been matched to any previous click
-      return timeAfterClick >= CONFIG.MIN_EVENT_DELAY && 
-             timeAfterClick <= CONFIG.CLICK_EVENT_DELAY &&
+      return timeAfterClick >= CONFIG.GLOBAL.minEventDelay && 
+             timeAfterClick <= CONFIG.CLICK.eventDelay &&
              !matchedNetworkEventKeys.has(eventKey);
     });
     
@@ -84,7 +84,7 @@ class NetworkHandler {
     
     // Log details of found network events
     if (newNetworkEvents.length > 0) {
-      console.log(`📡 Found ${newNetworkEvents.length} network events within ${CONFIG.MIN_EVENT_DELAY/1000}-${CONFIG.CLICK_EVENT_DELAY/1000}s window after clicking "${elementInfo.textContent}"`);
+      console.log(`📡 Found ${newNetworkEvents.length} network events within ${CONFIG.GLOBAL.minEventDelay/1000}-${CONFIG.CLICK.eventDelay/1000}s window after clicking "${elementInfo.textContent}"`);
       
       const { ga4Events, otherEvents } = this.categorizeEvents(newNetworkEvents);
       console.log(`  🔵 GA4 events: ${ga4Events.length}`);
@@ -92,7 +92,7 @@ class NetworkHandler {
       
       this.logEventDetails(newNetworkEvents, clickStartTime, 'click', elementInfo, extractEventsFromNetworkDataFn);
     } else {
-      console.log(`📡 No new network events found within ${CONFIG.MIN_EVENT_DELAY/1000}-${CONFIG.CLICK_EVENT_DELAY/1000}s window after clicking "${elementInfo.textContent}"`);
+      console.log(`📡 No new network events found within ${CONFIG.GLOBAL.minEventDelay/1000}-${CONFIG.CLICK.eventDelay/1000}s window after clicking "${elementInfo.textContent}"`);
     }
     
     return newNetworkEvents;
@@ -112,20 +112,20 @@ class NetworkHandler {
       // 2. Are within our extended scroll time window (includes SCROLL_EVENT_DELAY + SCROLL_TIMEOUT)
       // 3. Haven't been matched to any previous action
       // 4. Are likely scroll-related (check for scroll keywords or GA4 events)
-      const totalScrollWindow = CONFIG.SCROLL_EVENT_DELAY; // Add extra buffer
-      const isWithinTimeWindow = timeAfterScroll >= CONFIG.MIN_EVENT_DELAY && 
+      const totalScrollWindow = CONFIG.SCROLL.eventDelay; // Add extra buffer
+      const isWithinTimeWindow = timeAfterScroll >= CONFIG.GLOBAL.minEventDelay && 
                                 timeAfterScroll <= totalScrollWindow;
       const isNotMatched = !matchedNetworkEventKeys.has(eventKey);
       const isScrollRelated = this.isScrollRelatedEvent(networkEvent, extractEventsFromNetworkDataFn);
     
       
-      return isWithinTimeWindow && isNotMatched && (isScrollRelated || CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => networkEvent.url.includes(ga4Url)));
+      return isWithinTimeWindow && isNotMatched && (isScrollRelated || CONFIG.GLOBAL.ga4Urls.some(ga4Url => networkEvent.url.includes(ga4Url)));
     });
     
     // Mark these events as matched
     this.markEventsAsMatched(newNetworkEvents, matchedNetworkEventKeys);
     
-    const totalWindow = (CONFIG.SCROLL_EVENT_DELAY) / 1000;
+    const totalWindow = (CONFIG.SCROLL.eventDelay) / 1000;
     // Log details of found network events
     if (newNetworkEvents.length > 0) {
       console.log(`📊 Found ${newNetworkEvents.length} network events within ${totalWindow}s window after scrolling to ${scrollInfo.percentage}%`);
@@ -145,7 +145,7 @@ class NetworkHandler {
   // Helper function to determine if a network event is likely scroll-related
   static isScrollRelatedEvent(networkEvent, extractEventsFromNetworkDataFn) {
     // Check if it's a GA4 event
-    const isGA4 = CONFIG.NETWORK_FILTERS.GA4_URL.some(ga4Url => networkEvent.url.includes(ga4Url));
+    const isGA4 = CONFIG.GLOBAL.ga4Urls.some(ga4Url => networkEvent.url.includes(ga4Url));
     if (!isGA4) return false;
     
     // Extract events and check for scroll-related keywords
@@ -155,7 +155,7 @@ class NetworkHandler {
       // Check event name, action, and label for scroll-related keywords
       const eventText = `${event.eventName || ''} ${event.eventAction || ''} ${event.eventLabel || ''}`.toLowerCase();
       
-      const hasScrollKeywords = CONFIG.NETWORK_FILTERS.SCROLL_EVENT_KEYWORDS.some(keyword => 
+      const hasScrollKeywords = CONFIG.SCROLL.eventKeywords.some(keyword => 
         eventText.includes(keyword.toLowerCase())
       );
       
@@ -167,7 +167,7 @@ class NetworkHandler {
     // If no extracted events, check the raw post data for scroll keywords
     if (extractedEvents.length === 0 && networkEvent.postData) {
       const postDataLower = networkEvent.postData.toLowerCase();
-      return CONFIG.NETWORK_FILTERS.SCROLL_EVENT_KEYWORDS.some(keyword => 
+      return CONFIG.SCROLL.eventKeywords.some(keyword => 
         postDataLower.includes(keyword.toLowerCase())
       );
     }
