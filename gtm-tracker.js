@@ -729,6 +729,9 @@ if (!url) {
   console.log(`  --click-pause=N           Pause after each action in milliseconds (default: ${CONFIG.CLICK.eventDelay})`);
   console.log('  --form-config=NAME        Specify form configuration to use (auto-detects by URL if not specified)');
   console.log('');
+  console.log('💡 Tip: Use ard-compare.js to compare results against ARD requirements:');
+  console.log('   node ard-compare.js --networkresults=./ga4-events-example.com.csv --ard=./ard.csv');
+  console.log('');
   console.log('🧪 Testing (Controlled in config/main.js → RUN_GA_CATEGORIES):');
   console.log(`  📄 Pageview tracking: ${CONFIG.RUN_GA_CATEGORIES.page_view ? '✅' : '❌'}`);
   console.log(`  📊 Scroll depth testing: ${CONFIG.RUN_GA_CATEGORIES.scroll ? '✅' : '❌'}`);
@@ -749,4 +752,5 @@ const tracker = new GTMTracker({
   clickPause, 
   formConfig 
 });
+
 tracker.run();

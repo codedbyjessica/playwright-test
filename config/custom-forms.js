@@ -37,7 +37,6 @@ const FORM_CONFIGS = {
           valid: 'Patient',
           invalid: null // Will test empty selection
         },
-        required: true
       },
       
       // Conditional weight field (only shows for Caregiver)
@@ -49,7 +48,6 @@ const FORM_CONFIGS = {
           valid: ['33 lbs to less than 66 lbs'],
           invalid: [] // Empty array for required field
         },
-        required: true,
         conditional: {
           dependsOn: 'i_am',
           showWhen: 'Caregiver'
@@ -66,10 +64,9 @@ const FORM_CONFIGS = {
           'I have a neffy prescription'
         ],
         testValues: {
-          valid: 'I don\'t have an epinephrine prescription',
+          valid: 'I have a neffy prescription',
           invalid: null
         },
-        required: true
       },
       
       // Checkbox: Subscription options
@@ -82,10 +79,9 @@ const FORM_CONFIGS = {
           'Set up expiration reminders for neffy devices'
         ],
         testValues: {
-          valid: ['Get news and updates about neffy'],
+          valid: ['Set up expiration reminders for neffy devices'],
           invalid: [] // Empty selection
         },
-        required: true
       },
       
       // Conditional device expiration fields (only show when reminder is checked)
@@ -96,7 +92,6 @@ const FORM_CONFIGS = {
           valid: '2025',
           invalid: ''
         },
-        required: false,
         conditional: {
           dependsOn: 'subscription',
           showWhen: 'Set up expiration reminders for neffy devices'
@@ -110,7 +105,6 @@ const FORM_CONFIGS = {
           valid: '6',
           invalid: ''
         },
-        required: false,
         conditional: {
           dependsOn: 'subscription',
           showWhen: 'Set up expiration reminders for neffy devices'
@@ -125,7 +119,6 @@ const FORM_CONFIGS = {
           valid: 'John',
           invalid: '' // Empty for required field
         },
-        required: true
       },
       
       last_name: {
@@ -135,7 +128,6 @@ const FORM_CONFIGS = {
           valid: 'Doe',
           invalid: ''
         },
-        required: true
       },
       
       email: {
@@ -145,7 +137,6 @@ const FORM_CONFIGS = {
           valid: 'john.doe@example.com',
           invalid: 'invalid-email'
         },
-        required: true
       },
       
       phone: {
@@ -155,7 +146,6 @@ const FORM_CONFIGS = {
           valid: '2123421342',
           invalid: '123' // Too short
         },
-        required: true
       },
       
       zip: {
@@ -165,7 +155,6 @@ const FORM_CONFIGS = {
           valid: '12345',
           invalid: 'ABCDE' // Non-numeric
         },
-        required: true
       },
       
       // Checkbox: Consent
@@ -176,31 +165,7 @@ const FORM_CONFIGS = {
           valid: true,
           invalid: false // Required to be checked
         },
-        required: true
       }
-    },
-    
-    // Expected error selectors for validation testing
-    expectedErrors: {
-      // Errors that should appear when form is submitted empty
-      emptySubmission: [
-        '#error-i_am',
-        '#error-prescription', 
-        '#error-subscription',
-        '#error-first_name',
-        '#error-last_name',
-        '#error-email',
-        '#error-phone',
-        '#error-zip',
-        '#error-consent'
-      ],
-      
-      // Errors that should appear when form is submitted with invalid data
-      invalidSubmission: [
-        '#error-email', // Invalid email format
-        '#error-phone', // Invalid phone format
-        '#error-zip'    // Invalid zip format
-      ]
     },
     
     // GTM tracking configuration (form-specific)
@@ -222,12 +187,6 @@ const FORM_CONFIGS = {
     tracking: {
       formCode: 'form_contact'
     }
-    
-    // Optional: Add expected errors for validation testing
-    // expectedErrors: {
-    //   emptySubmission: ['#name-error', '#email-error'],
-    //   invalidSubmission: ['#email-error']
-    // }
     
     // Optional: Add detailed field configs for individual field testing
     // fields: { ... }

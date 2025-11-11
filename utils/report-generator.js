@@ -310,9 +310,9 @@ class ReportGenerator {
 
   // Helper function to generate scroll events HTML
   generateScrollEventsHTML(scrollEvents, extractEventsFromNetworkData) {
-    const scrollsWithEvents = scrollEvents.filter(scroll => 
+    const scrollsWithEvents = scrollEvents && scrollEvents.length > 0 ? scrollEvents.filter(scroll => 
       scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0
-    );
+    ) : [];
 
     if (scrollsWithEvents.length === 0) {
       return '<p>No scroll actions triggered GA4 events.</p>';
@@ -485,6 +485,8 @@ class ReportGenerator {
       <div class="form-test-subsection">
         <h4>🚀 Form Submission Tests (${formTestResults.submissionTests.length})</h4>
         ${formTestResults.submissionTests.map((test, idx) => {
+
+          console.log("submission test", test);
           let statusBadge = '';
           let statusColor = '';
           
@@ -598,156 +600,299 @@ class ReportGenerator {
     `;
   }
 
+  // Build all events array - shared logic for CSV and JSON
+  buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents, extractEventsFromNetworkData) {
+    const allEvents = [];
+    
+    // Ensure all parameters are valid (safety check)
+    clickEvents = Array.isArray(clickEvents) ? clickEvents : [];
+    scrollEvents = Array.isArray(scrollEvents) ? scrollEvents : [];
+    networkEvents = Array.isArray(networkEvents) ? networkEvents : [];
+    
+    // If extractEventsFromNetworkData is not a function, return empty array
+    if (typeof extractEventsFromNetworkData !== 'function') {
+      console.warn('⚠️ extractEventsFromNetworkData is not a function, returning empty events array');
+      return allEvents;
+    }
+    
+    // Add click events
+    if (clickEvents && clickEvents.length > 0) {
+      clickEvents
+        .filter(click => click.success === true)
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .forEach((click, clickIdx) => {
+          const hasMatchingEvent = click.matchedNetworkEvents && click.matchedNetworkEvents.length > 0;
+          
+          if (hasMatchingEvent) {
+            // Filter out excluded events (scroll, pageview, form, etc.)
+            const EventClassifier = require('../utils/event-classifier');
+            const filteredEvents = click.matchedNetworkEvents.filter(networkEvent => 
+              !EventClassifier.shouldExcludeFromClickMatch(networkEvent.url, networkEvent.postData)
+            );
+            
+            if (filteredEvents.length > 0) {
+              // Create entry for each GA4 event
+              filteredEvents.forEach(networkEvent => {
+                const extractedEvents = extractEventsFromNetworkData(networkEvent);
+                
+                extractedEvents.forEach(event => {
+                  allEvents.push({
+                    timestamp: click.timestamp,
+                    triggerType: 'click',
+                    triggerOrder: clickIdx + 1,
+                    elementType: click.element.tagName || '',
+                    elementText: click.element.textContent || '',
+                    elementHref: click.element.href || '',
+                    elementSelector: click.element.selector || '',
+                    scrollDepth: '',
+                    formCode: '',
+                    triggerTime: new Date(click.timestamp).toLocaleTimeString(),
+                    ardEventName: event.eventName || '',  // ARD-friendly name
+                    eventName: event.eventName || '',
+                    eventCategory: event.eventCategory || '',
+                    eventAction: event.eventAction || '',
+                    eventLabel: event.eventLabel || '',
+                    timeAfterTrigger: networkEvent.timestamp - click.timestamp,
+                    networkUrl: networkEvent.url
+                  });
+                });
+              });
+            } else {
+              // Click had events but they were all filtered out - still add the click with empty event data
+              allEvents.push({
+                timestamp: click.timestamp,
+                triggerType: 'click',
+                triggerOrder: clickIdx + 1,
+                elementType: click.element.tagName || '',
+                elementText: click.element.textContent || '',
+                elementHref: click.element.href || '',
+                elementSelector: click.element.selector || '',
+                scrollDepth: '',
+                formCode: '',
+                triggerTime: new Date(click.timestamp).toLocaleTimeString(),
+                ardEventName: '',  // No event
+                eventName: '',
+                eventCategory: '',
+                eventAction: '',
+                eventLabel: '',
+                timeAfterTrigger: '',
+                networkUrl: ''
+              });
+            }
+          } else {
+            // Click with no matching events - add it with empty event data
+            allEvents.push({
+              timestamp: click.timestamp,
+              triggerType: 'click',
+              triggerOrder: clickIdx + 1,
+              elementType: click.element.tagName || '',
+              elementText: click.element.textContent || '',
+              elementHref: click.element.href || '',
+              elementSelector: click.element.selector || '',
+              scrollDepth: '',
+              formCode: '',
+              triggerTime: new Date(click.timestamp).toLocaleTimeString(),
+              ardEventName: '',  // No event
+              eventName: '',
+              eventCategory: '',
+              eventAction: '',
+              eventLabel: '',
+              timeAfterTrigger: '',
+              networkUrl: ''
+            });
+          }
+        });
+    }
+    
+    // Add scroll events
+    if (scrollEvents && scrollEvents.length > 0) {
+      scrollEvents
+        .filter(scroll => scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0)
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .forEach((scroll, scrollIdx) => {
+          scroll.matchedNetworkEvents.forEach(networkEvent => {
+            const extractedEvents = extractEventsFromNetworkData(networkEvent);
+            
+            extractedEvents.forEach(event => {
+              allEvents.push({
+                timestamp: scroll.timestamp,
+                triggerType: 'scroll',
+                triggerOrder: scrollIdx + 1,
+                elementType: '',
+                elementText: '',
+                elementHref: '',
+                elementSelector: '',
+                scrollDepth: `${scroll.percentage}%`,
+                formCode: '',
+                triggerTime: new Date(scroll.timestamp).toLocaleTimeString(),
+                ardEventName: event.eventName || '',  // ARD-friendly name
+                eventName: event.eventName || '',
+                eventCategory: event.eventCategory || '',
+                eventAction: event.eventAction || '',
+                eventLabel: event.eventLabel || '',
+                timeAfterTrigger: networkEvent.timestamp - scroll.timestamp,
+                networkUrl: networkEvent.url
+              });
+            });
+          });
+        });
+    }
+    
+    // Add form events
+    if (formTestResults && formTestResults.testResults) {
+      formTestResults.testResults.forEach((formTest, formIdx) => {
+        if (formTest.networkEvents && formTest.networkEvents.length > 0) {
+          formTest.networkEvents.forEach(networkEvent => {
+            const extractedEvents = extractEventsFromNetworkData(networkEvent);
+            
+            extractedEvents.forEach(event => {
+              allEvents.push({
+                timestamp: formTest.timestamp,
+                triggerType: `form_${formTest.testType}`,
+                triggerOrder: formIdx + 1,
+                elementType: 'form',
+                elementText: '',
+                elementHref: '',
+                elementSelector: formTestResults.formConfig?.formSelector || '',
+                scrollDepth: '',
+                formCode: formTestResults.formConfig?.tracking?.formCode || '',
+                triggerTime: new Date(formTest.timestamp).toLocaleTimeString(),
+                ardEventName: event.eventName || '',  // ARD-friendly name
+                eventName: event.eventName || '',
+                eventCategory: event.eventCategory || '',
+                eventAction: event.eventAction || '',
+                eventLabel: event.eventLabel || '',
+                timeAfterTrigger: networkEvent.timestamp - formTest.timestamp,
+                networkUrl: networkEvent.url
+              });
+            });
+          });
+        }
+      });
+    }
+    
+    // Add pageview and other unmatched events
+    if (networkEvents && networkEvents.length > 0) {
+      networkEvents
+        .filter(event => event.type === 'request' && event.source !== 'form_testing')
+        .forEach(networkEvent => {
+        const extractedEvents = extractEventsFromNetworkData(networkEvent);
+        
+        extractedEvents.forEach(event => {
+          // Check if this event is already included (matched to a trigger)
+          const alreadyIncluded = allEvents.some(e => 
+            e.networkUrl === networkEvent.url && 
+            Math.abs(e.timestamp - networkEvent.timestamp) < 100
+          );
+          
+          if (!alreadyIncluded) {
+            allEvents.push({
+              timestamp: networkEvent.timestamp,
+              triggerType: 'pageview',
+              triggerOrder: '',
+              elementType: '',
+              elementText: '',
+              elementHref: '',
+              elementSelector: '',
+              scrollDepth: '',
+              formCode: '',
+              triggerTime: new Date(networkEvent.timestamp).toLocaleTimeString(),
+              ardEventName: event.eventName || '',  // ARD-friendly name
+              eventName: event.eventName || '',
+              eventCategory: event.eventCategory || '',
+              eventAction: event.eventAction || '',
+              eventLabel: event.eventLabel || '',
+              timeAfterTrigger: '',
+              networkUrl: networkEvent.url
+            });
+          }
+        });
+      });
+    }
+    
+    // Sort all events by timestamp
+    allEvents.sort((a, b) => a.timestamp - b.timestamp);
+    
+    return allEvents;
+  }
+  
   // Generate CSV report
-  async generateCSVReport(testResultsDir, reportFilename, clickEvents, extractEventsFromNetworkData) {
+  async generateCSVReport(testResultsDir, reportFilename, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData) {
     console.log('\n📊 === GENERATING CSV REPORT ===');
+    
+    // Use shared logic to build events array
+    const allEvents = this.buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents, extractEventsFromNetworkData);
     
     const csvRows = [];
     
-    // Add CSV header - simplified columns
+    // Clean and escape CSV values helper
+    const cleanValue = (value) => {
+      if (value === null || value === undefined) return '';
+      const stringValue = String(value).trim();
+      if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes('\r')) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+      }
+      return stringValue;
+    };
+    
+    // Add CSV header - simplified for ARD comparison
     csvRows.push([
-      'Click Order',
-      'Element Type',
       'Element Text',
-      'Element Href',
-      'Element Selector',
-      'Click Time',
-      'Status',
-      'GA4 Event Count',
-      'Primary GA4 Event Name',
-      'Primary GA4 Event Category',
-      'Primary GA4 Event Action',
-      'Primary GA4 Event Label',
-      'Time After Click (ms)',
+      'Event name',
+      'Event Category',
+      'Event Action',
+      'Event Label',
+      'Timestamp',
       'Network URL'
     ]);
     
-    // Add click events data
-    clickEvents
-      .filter(click => click.success === true)
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .forEach((click, idx) => {
-        const hasMatchingEvent = click.matchedNetworkEvents && click.matchedNetworkEvents.length > 0;
-        
-        // Get primary GA4 event data (first event)
-        let primaryEventName = '';
-        let primaryEventCategory = '';
-        let primaryEventAction = '';
-        let primaryEventLabel = '';
-        let timeAfterClick = '';
-        let networkURL = '';
-        
-        if (hasMatchingEvent && click.matchedNetworkEvents.length > 0) {
-          const firstNetworkEvent = click.matchedNetworkEvents[0];
-          const extractedEvents = extractEventsFromNetworkData(firstNetworkEvent);
-          
-          if (extractedEvents.length > 0) {
-            const firstEvent = extractedEvents[0];
-            primaryEventName = firstEvent.eventName || '';
-            primaryEventCategory = firstEvent.eventCategory || '';
-            primaryEventAction = firstEvent.eventAction || '';
-            primaryEventLabel = firstEvent.eventLabel || '';
-            timeAfterClick = firstNetworkEvent.timestamp - click.timestamp;
-            networkURL = firstNetworkEvent.url;
-          }
-        }
-        
-        // Clean and escape CSV values
-        const cleanValue = (value) => {
-          if (value === null || value === undefined) return '';
-          const stringValue = String(value).trim();
-          if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes('\r')) {
-            return `"${stringValue.replace(/"/g, '""')}"`;
-          }
-          return stringValue;
-        };
-        
-        csvRows.push([
-          idx + 1, // Click Order
-          cleanValue(click.element.tagName || ''), // Element Type
-          cleanValue(click.element.textContent || ''), // Element Text
-          cleanValue(click.element.href || ''), // Element Href
-          cleanValue(click.element.selector || ''), // Element Selector
-          new Date(click.timestamp).toLocaleTimeString(), // Click Time
-          hasMatchingEvent ? 'TRIGGERED GA4' : 'NO GA4', // Status
-          hasMatchingEvent ? click.matchedNetworkEvents.length : 0, // GA4 Event Count
-          cleanValue(primaryEventName), // Primary GA4 Event Name
-          cleanValue(primaryEventCategory), // Primary GA4 Event Category
-          cleanValue(primaryEventAction), // Primary GA4 Event Action
-          cleanValue(primaryEventLabel), // Primary GA4 Event Label
-          timeAfterClick, // Time After Click (ms)
-          cleanValue(networkURL) // Network URL
-        ]);
-      });
+    // Add all events to CSV
+    allEvents.forEach(event => {
+      csvRows.push([
+        cleanValue(event.elementText),
+        cleanValue(event.ardEventName || event.eventName),  // Event name (ARD-friendly)
+        cleanValue(event.eventCategory),
+        cleanValue(event.eventAction),
+        cleanValue(event.eventLabel),
+        event.timestamp || '',  // Raw timestamp
+        cleanValue(event.networkUrl)
+      ]);
+    });
     
     // Write CSV file
     const csvContent = csvRows.map(row => row.join(',')).join('\n');
     const csvPath = path.join(testResultsDir, `${reportFilename}.csv`);
     fs.writeFileSync(csvPath, csvContent);
-    console.log(`📊 CSV report saved to ${csvPath}`);
+    console.log(`📊 CSV report saved to ${csvPath} (${allEvents.length} events)`);
   }
 
-  // Generate JSON report
-  async generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, extractEventsFromNetworkData) {
+  // Generate JSON report  
+  async generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData) {
     console.log('\n📊 === GENERATING JSON REPORT FOR ARD ANALYSIS ===');
     
-    // Extract all network events with their parsed event data
-    const networkEventsForAnalysis = [];
-    
-    networkEvents.filter(event => event.type === 'request').forEach((event, idx) => {
-      const extractedEvents = extractEventsFromNetworkData(event);
-      
-      if (extractedEvents.length > 0) {
-        extractedEvents.forEach(extractedEvent => {
-          networkEventsForAnalysis.push({
-            networkEventIndex: idx,
-            timestamp: event.timestamp,
-            url: event.url,
-            method: event.method,
-            postData: event.postData,
-            eventName: extractedEvent.eventName,
-            eventCategory: extractedEvent.eventCategory,
-            eventAction: extractedEvent.eventAction,
-            eventLabel: extractedEvent.eventLabel,
-            eventLocation: extractedEvent.eventLocation,
-            linkClasses: extractedEvent.linkClasses,
-            linkURL: extractedEvent.linkURL,
-            linkDomain: extractedEvent.linkDomain,
-            outbound: extractedEvent.outbound,
-            source: extractedEvent.source,
-            rawData: extractedEvent.rawData,
-            line: extractedEvent.line
-          });
-        });
-      }
-    });
+    // Use the EXACT same logic as CSV generation for consistency
+    const allEvents = this.buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents, extractEventsFromNetworkData);
     
     // Create the JSON report data
     const jsonReport = {
       metadata: {
         url: options.url,
         timestamp: new Date().toISOString(),
-        totalNetworkEvents: networkEvents.length,
-        totalExtractedEvents: networkEventsForAnalysis.length,
-        totalClicks: clickEvents.length,
-        successfulClicks: clickEvents.filter(click => click.success === true).length,
-        failedClicks: clickEvents.filter(click => click.success === false).length
+        totalEvents: allEvents.length,
+        eventsByType: {
+          click: allEvents.filter(e => e.triggerType === 'click').length,
+          scroll: allEvents.filter(e => e.triggerType === 'scroll').length,
+          form: allEvents.filter(e => e.triggerType.startsWith('form_')).length,
+          pageview: allEvents.filter(e => e.triggerType === 'pageview').length
+        }
       },
-      networkEvents: networkEventsForAnalysis,
-      clickEvents: clickEvents.map(click => ({
-        timestamp: click.timestamp,
-        element: click.element,
-        success: click.success,
-        error: click.error,
-        matchedNetworkEvents: click.matchedNetworkEvents ? click.matchedNetworkEvents.length : 0
-      }))
+      events: allEvents
     };
     
     // Write JSON file
     const jsonPath = path.join(testResultsDir, `${reportFilename}.json`);
     fs.writeFileSync(jsonPath, JSON.stringify(jsonReport, null, 2));
-    console.log(`📊 JSON report saved to ${jsonPath}`);
-    console.log(`📊 Total extracted events for ARD analysis: ${networkEventsForAnalysis.length}`);
+    console.log(`📊 JSON report saved to ${jsonPath} (${allEvents.length} events)`);
   }
 
   // Generate HTML report
@@ -785,11 +930,11 @@ class ReportGenerator {
     console.log(`\n📋 Generating ${enabledReports.join(', ')} report${enabledReports.length > 1 ? 's' : ''}...`);
     
     if (CONFIG.REPORT_GENERATION.csv) {
-      await this.generateCSVReport(testResultsDir, reportFilename, clickEvents, extractEventsFromNetworkData);
+      await this.generateCSVReport(testResultsDir, reportFilename, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData);
     }
 
     if (CONFIG.REPORT_GENERATION.json) {
-      await this.generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, extractEventsFromNetworkData);
+      await this.generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData);
     }
 
     if (CONFIG.REPORT_GENERATION.html) {

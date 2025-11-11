@@ -37,7 +37,7 @@ class FormTester {
   /**
    * Wait for network events after a form action - simple and direct
    */
-  async waitForNetworkEvents(startTime, actionInfo, timeout = 20000) {
+  async waitForNetworkEvents(startTime, actionInfo, timeout = CONFIG.FORM.eventDelay) {
     this.log(`🔍 Waiting ${timeout/1000}s for events after ${actionInfo.action}_${actionInfo.type}...`);
     
     // Wait the full timeout period
@@ -304,40 +304,40 @@ class FormTester {
     }
     
     this.log('🚀 Starting valid form submission test...');
-    const startTime = Date.now();
     
     // Fill fields if configured
     if (this.config.fields && Object.keys(this.config.fields).length > 0) {
-      const requiredFields = Object.entries(this.config.fields).filter(([_, config]) => config.required || config.testValues.valid !== undefined);
-      this.log(`📝 Filling ${requiredFields.length} fields with valid data...`);
+      const fieldsToFill = Object.entries(this.config.fields).filter(([_, config]) => config.testValues?.valid !== undefined);
+      this.log(`📝 Filling ${fieldsToFill.length} fields with valid data...`);
       
-      // Fill all required fields with valid data (fast, no delays)
+      // Fill all fields with valid data (fast, no delays)
       let fieldsFilled = 0;
-      for (const [fieldName, fieldConfig] of Object.entries(this.config.fields)) {
-        if (fieldConfig.required || fieldConfig.testValues.valid !== undefined) {
-          // Check if conditional field should be filled
-          if (fieldConfig.conditional) {
-            const isVisible = await this.isConditionalFieldVisible(fieldConfig);
-            if (!isVisible) continue;
-          }
-          
-          await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.valid);
-          fieldsFilled++;
-          this.log(`   ✅ Filled field "${fieldName}" (${fieldsFilled}/${requiredFields.length})`);
+      for (const [fieldName, fieldConfig] of fieldsToFill) {
+        // Check if conditional field should be filled
+        if (fieldConfig.conditional) {
+          const isVisible = await this.isConditionalFieldVisible(fieldConfig);
+          if (!isVisible) continue;
         }
+        
+        await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.valid);
+        fieldsFilled++;
+        this.log(`   ✅ Filled field "${fieldName}" (${fieldsFilled}/${fieldsToFill.length})`);
       }
     } else {
       this.log('ℹ️  No fields configured - submitting form without pre-filling');
     }
     
-    // Submit the form immediately
+    // Submit the form immediately and capture the submit timestamp
     this.log('🚀 Submitting form with valid data...');
     console.log("submit button selector", this.config.submitButtonSelector);
+    
+    // Capture timestamp RIGHT BEFORE clicking submit
+    const submitTime = Date.now();
     await this.page.click(this.config.submitButtonSelector);
     
     // Wait for network events immediately after submission (during the 20s wait period)
     this.log('⏳ Waiting for GA4 events after form submission...');
-    const networkEvents = await this.waitForNetworkEvents(startTime, {
+    const networkEvents = await this.waitForNetworkEvents(submitTime, {
       action: 'form_submit',
       type: 'valid_submission'
     });
@@ -349,7 +349,7 @@ class FormTester {
       testType: 'valid_submission',
       success: true,
       networkEvents: networkEvents,
-      timestamp: startTime
+      timestamp: submitTime
     });
     
     this.log(`✅ Valid submission test completed`);
@@ -365,72 +365,35 @@ class FormTester {
     }
     
     this.log('🧪 Starting empty form submission test...');
-    const startTime = Date.now();
     
     // Form is already fresh/empty from page refresh, no need to clear
     this.log('📝 Form is already empty (fresh page)');
     
-    // Submit empty form immediately
+    // Submit empty form immediately and capture the submit timestamp
     this.log('🚀 Submitting empty form to trigger validation errors...');
+    
+    // Capture timestamp RIGHT BEFORE clicking submit
+    const submitTime = Date.now();
     await this.page.click(this.config.submitButtonSelector);
     this.log('✅ Empty form submitted');
     
-    // Wait 8 seconds for GA4 events and error messages
-    this.log('⏳ Waiting 8 seconds for GA4 events and error messages...');
-    await this.page.waitForTimeout(CONFIG.FORM.eventDelay);
-    
-    // Check for expected errors
-    this.log('🔍 Checking for validation errors...');
-    const errorResults = [];
-    if (this.config.expectedErrors && this.config.expectedErrors.emptySubmission) {
-      let errorsFound = 0;
-      for (const errorSelector of this.config.expectedErrors.emptySubmission) {
-        try {
-          const errorElement = await this.page.$(errorSelector);
-          const hasError = errorElement !== null;
-          let errorText = '';
-          
-          if (hasError) {
-            errorText = await errorElement.textContent();
-            errorsFound++;
-            this.log(`   ✅ Error found: ${errorSelector} - "${errorText.trim()}"`);
-          } else {
-            this.log(`   ❌ Expected error not found: ${errorSelector}`);
-          }
-          
-          errorResults.push({
-            selector: errorSelector,
-            found: hasError,
-            text: errorText.trim()
-          });
-        } catch (error) {
-          this.log(`   ⚠️  Error checking ${errorSelector}: ${error.message}`);
-          errorResults.push({
-            selector: errorSelector,
-            found: false,
-            error: error.message
-          });
-        }
-      }
-      this.log(`📊 Validation errors found: ${errorsFound}/${this.config.expectedErrors.emptySubmission.length}`);
-    }
-    
-    // Wait for network events
-    const networkEvents = await this.waitForNetworkEvents(startTime, {
+    // Wait for network events (only those AFTER submit)
+    this.log('⏳ Waiting for GA4 events after empty form submission...');
+    const networkEvents = await this.waitForNetworkEvents(submitTime, {
       action: 'form_submit',
       type: 'empty_submission'
     });
     
+    this.log(`📡 Captured ${networkEvents.length} events for empty submission`);
+    
     this.testResults.push({
       testType: 'empty_submission',
-      success: true,  // Success means test ran successfully, not that form submitted
-      errorResults: errorResults,
+      success: true,
       networkEvents: networkEvents,
-      timestamp: startTime
+      timestamp: submitTime
     });
     
-    const errorsFound = errorResults.filter(e => e.found).length;
-    this.log(`✅ Empty submission test completed. Found ${errorsFound}/${errorResults.length} expected errors`);
+    this.log(`✅ Empty submission test completed`);
   }
 
   /**
@@ -443,7 +406,6 @@ class FormTester {
     }
     
     this.log('🧪 Starting invalid data submission test...');
-    const startTime = Date.now();
     
     // Fill form with invalid data if configured
     if (this.config.fields && Object.keys(this.config.fields).length > 0) {
@@ -467,60 +429,32 @@ class FormTester {
       return;
     }
     
-    // Submit the form immediately
+    // Submit the form immediately and capture the submit timestamp
     this.log('🚀 Submitting form with invalid data...');
+    
+    // Capture timestamp RIGHT BEFORE clicking submit
+    const submitTime = Date.now();
     await this.page.click(this.config.submitButtonSelector);
     
     this.log('✅ Form submitted with invalid data');
     
-    // Wait 8 seconds for GA4 events and error messages
-    this.log('⏳ Waiting 8 seconds for GA4 events and error messages...');
-    await this.page.waitForTimeout(CONFIG.FORM.eventDelay);
-    
-    // Check for expected validation errors
-    const errorResults = [];
-    if (this.config.expectedErrors && this.config.expectedErrors.invalidSubmission) {
-      for (const errorSelector of this.config.expectedErrors.invalidSubmission) {
-        try {
-          const errorElement = await this.page.$(errorSelector);
-          const hasError = errorElement !== null;
-          let errorText = '';
-          
-          if (hasError) {
-            errorText = await errorElement.textContent();
-          }
-          
-          errorResults.push({
-            selector: errorSelector,
-            found: hasError,
-            text: errorText.trim()
-          });
-        } catch (error) {
-          errorResults.push({
-            selector: errorSelector,
-            found: false,
-            error: error.message
-          });
-        }
-      }
-    }
-    
-    // Wait for network events
-    const networkEvents = await this.waitForNetworkEvents(startTime, {
+    // Wait for network events (only those AFTER submit)
+    this.log('⏳ Waiting for GA4 events after invalid form submission...');
+    const networkEvents = await this.waitForNetworkEvents(submitTime, {
       action: 'form_submit',
       type: 'invalid_submission'
     });
     
+    this.log(`📡 Captured ${networkEvents.length} events for invalid submission`);
+    
     this.testResults.push({
       testType: 'invalid_submission',
-      success: true,  // Success means test ran successfully, not that form submitted
-      errorResults: errorResults,
+      success: true,
       networkEvents: networkEvents,
-      timestamp: startTime
+      timestamp: submitTime
     });
     
-    const errorsFound = errorResults.filter(e => e.found).length;
-    this.log(`✅ Invalid submission test completed. Found ${errorsFound}/${errorResults.length} expected validation errors`);
+    this.log(`✅ Invalid submission test completed`);
   }
 
   /**

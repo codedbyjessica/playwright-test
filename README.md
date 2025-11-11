@@ -15,9 +15,9 @@ This project provides a unified tool to automatically test Google Analytics 4 (G
 ## Main Components
 
 1. **GTM Tracker** (`gtm-tracker.js`) - Unified testing tool for clicks, scrolls, forms, and GA4 analysis
-2. **Form Testing Engine** (`utils/form-tester.js`) - Comprehensive form testing with validation scenarios
-3. **Custom Form Configurations** (`custom-config.js`) - Configurable form testing scenarios
-4. **Browser Runner** (`browser-runner.js`) - Manual testing and development tool
+2. **ARD Comparison Tool** (`ard-compare.js`) - Standalone tool to compare test results against ARD requirements
+3. **Form Testing Engine** (`utils/form-tester.js`) - Comprehensive form testing with validation scenarios
+4. **Custom Form Configurations** (`custom-config.js`) - Configurable form testing scenarios
 
 ## Prerequisites
 
@@ -64,6 +64,43 @@ node browser-runner.js https://www.example.com --viewport-width=1920 --viewport-
 - Keeps browser open for manual inspection (non-headless mode)
 
 ## Usage
+
+### ARD Comparison Tool
+
+Compare your test results against an Analytics Requirements Document (ARD) to verify implementation:
+
+```bash
+# Run tests first
+node gtm-tracker.js https://www.example.com
+
+# Compare results against ARD
+node ard-compare.js --networkresults=./ga4-events-example.com.csv --ard=./path/to/ard.csv
+
+# Custom output name
+node ard-compare.js --networkresults=./results.csv --ard=./ard.csv --output=my-comparison
+```
+
+**What it does:**
+- ✅ **Matching Events** - Events properly implemented per ARD
+- ❌ **Missing Events** - Required by ARD but not found in test
+- ➕ **Extra Events** - Found in test but not in ARD
+- ⚠️ **Parameter Mismatches** - Event found but parameters differ
+- 📊 **Coverage Score** - Percentage of ARD requirements met
+
+**Generates:**
+- `ard-compare-{name}.html` - Visual comparison report with color-coded sections
+- `ard-compare-{name}.csv` - Tabular comparison data for analysis
+- `ard-compare-{name}.json` - Machine-readable results for automation
+
+**Configuration:**
+Enable/disable report types in `config/main.js`:
+```javascript
+ARD_REPORT_GENERATION: {
+  html: true,
+  csv: true,
+  json: true,
+}
+```
 
 ### Complete GTM Testing (One Command Does Everything)
 
