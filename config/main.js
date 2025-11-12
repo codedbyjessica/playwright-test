@@ -13,9 +13,9 @@ const CONFIG = {
   // ============================================================================
 
   RUN_GA_CATEGORIES: {
-    click: true,
-    scroll: true,
-    page_view: true,
+    click: false,
+    scroll: false,
+    page_view: false,
     exit_modal: false,
     forms: true                   // Enable form testing
   },
@@ -144,6 +144,7 @@ const CONFIG = {
     errorCheckDelay: 3000,      // Delay to check for errors after submit
     successCheckDelay: 4000,     // Delay to check for success after submit
     eventDelay: 8000,           // Delay to wait for GA4 events after submit
+    timeout: 2000,              // Timeout for form operations
   },
 
   // ============================================================================

@@ -525,8 +525,15 @@ class FormTester {
    */
   async fastFillField(fieldName, fieldConfig, value) {
     try {
-      // Focus the field first
-      await this.page.focus(fieldConfig.selector);
+      // Check if field exists first (without timeout)
+      const fieldExists = await this.page.$(fieldConfig.selector);
+      if (!fieldExists) {
+        this.log(`⏭️  Field "${fieldName}" not found, skipping...`);
+        return { success: false, error: 'Field not found', skipped: true };
+      }
+      
+      // Focus the field first with short timeout
+      await this.page.focus(fieldConfig.selector, { timeout: CONFIG.FORM.timeout });
       
       switch (fieldConfig.type) {
         case 'text':
