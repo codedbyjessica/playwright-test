@@ -14,6 +14,7 @@
  */
 
 const CONFIG = require('../config/main');
+const NetworkHandler = require('../utils/network-handler');
 
 class FormTester {
   constructor(page, networkEvents, formConfig, extractEventsFromNetworkDataFn) {
@@ -34,55 +35,6 @@ class FormTester {
     console.log(`${prefix} [${timestamp}] ${message}`);
   }
 
-  /**
-   * Wait for network events after a form action - simple and direct
-   */
-  async waitForNetworkEvents(startTime, actionInfo, timeout = CONFIG.FORM.eventDelay) {
-    this.log(`🔍 Waiting ${timeout/1000}s for events after ${actionInfo.action}_${actionInfo.type}...`);
-    
-    // Wait the full timeout period
-    await this.page.waitForTimeout(timeout);
-    
-    const endTime = Date.now();
-    
-    // Get ALL events that occurred between action start and now
-    const eventsInWindow = this.networkEvents.filter(event => 
-      event.timestamp >= startTime && event.timestamp <= endTime
-    );
-    
-    this.log(`📡 Found ${eventsInWindow.length} total events in ${timeout/1000}s window`);
-    
-    // Extract event details using the same parser as click tester
-    const processedEvents = [];
-    
-    eventsInWindow.forEach(event => {
-      const extractedEvents = this.extractEventsFromNetworkData(event);
-      if (extractedEvents.length > 0) {
-        extractedEvents.forEach(extractedEvent => {
-          processedEvents.push({
-            ...event,
-            eventName: extractedEvent.eventName,
-            eventAction: extractedEvent.eventAction,
-            eventLabel: extractedEvent.eventLabel,
-            extractedParams: extractedEvent
-          });
-        });
-      } else {
-        // Include raw event even if no extracted params
-        processedEvents.push({
-          ...event,
-          eventName: 'unknown'
-        });
-      }
-    });
-    
-    this.log(`📊 Processed ${processedEvents.length} events with extracted data`);
-    processedEvents.forEach((event, idx) => {
-      this.log(`   ${idx + 1}. ${new Date(event.timestamp).toLocaleTimeString()} - ${event.eventName || 'unknown'}`);
-    });
-    
-    return processedEvents;
-  }
 
   /**
    * Fill a form field based on its type and configuration
@@ -339,9 +291,16 @@ class FormTester {
     
     // Wait for network events immediately after submission (during the 20s wait period)
     this.log('⏳ Waiting for GA4 events after form submission...');
-    const networkEvents = await this.waitForNetworkEvents(submitTime, {
-      action: 'form_submit',
-      type: 'valid_submission'
+    const networkEvents = await NetworkHandler.waitForFormNetworkEvents({
+      page: this.page,
+      startTime: submitTime,
+      networkEvents: this.networkEvents,
+      extractEventsFromNetworkData: this.extractEventsFromNetworkData,
+      timeout: CONFIG.FORM.eventDelay,
+      actionInfo: {
+        action: 'form_submit',
+        type: 'valid_submission'
+      }
     });
     
     this.log('✅ Form submitted successfully');
@@ -381,9 +340,16 @@ class FormTester {
     
     // Wait for network events (only those AFTER submit)
     this.log('⏳ Waiting for GA4 events after empty form submission...');
-    const networkEvents = await this.waitForNetworkEvents(submitTime, {
-      action: 'form_submit',
-      type: 'empty_submission'
+    const networkEvents = await NetworkHandler.waitForFormNetworkEvents({
+      page: this.page,
+      startTime: submitTime,
+      networkEvents: this.networkEvents,
+      extractEventsFromNetworkData: this.extractEventsFromNetworkData,
+      timeout: CONFIG.FORM.eventDelay,
+      actionInfo: {
+        action: 'form_submit',
+        type: 'empty_submission'
+      }
     });
     
     this.log(`📡 Captured ${networkEvents.length} events for empty submission`);
@@ -444,9 +410,16 @@ class FormTester {
     
     // Wait for network events (only those AFTER submit)
     this.log('⏳ Waiting for GA4 events after invalid form submission...');
-    const networkEvents = await this.waitForNetworkEvents(submitTime, {
-      action: 'form_submit',
-      type: 'invalid_submission'
+    const networkEvents = await NetworkHandler.waitForFormNetworkEvents({
+      page: this.page,
+      startTime: submitTime,
+      networkEvents: this.networkEvents,
+      extractEventsFromNetworkData: this.extractEventsFromNetworkData,
+      timeout: CONFIG.FORM.eventDelay,
+      actionInfo: {
+        action: 'form_submit',
+        type: 'invalid_submission'
+      }
     });
     
     this.log(`📡 Captured ${networkEvents.length} events for invalid submission`);

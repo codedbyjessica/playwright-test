@@ -26,20 +26,6 @@ class ClickTester {
   }
 
   /**
-   * Wait for network events after a click
-   */
-  async waitForNetworkEvents(clickStartTime, elementInfo) {
-    return NetworkHandler.waitForNetworkEvents(
-      this.page, 
-      clickStartTime, 
-      elementInfo, 
-      this.networkEvents, 
-      this.matchedNetworkEventKeys, 
-      this.extractEventsFromNetworkDataFn
-    );
-  }
-
-  /**
    * Main click testing method
    */
   async runClickTests() {
@@ -162,7 +148,7 @@ class ClickTester {
           }
           
           // Wait for network events within the time window
-          const newNetworkEvents = await this.waitForNetworkEvents(clickStartTime, elementInfo);
+          const newNetworkEvents = await NetworkHandler.waitForClickNetworkEvents(this.page, clickStartTime, elementInfo, this.networkEvents, this.matchedNetworkEventKeys, this.extractEventsFromNetworkDataFn);
           
           // Record successful click event with all data
           const clickTimestamp = clickStartTime;

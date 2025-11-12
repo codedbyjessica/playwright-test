@@ -59,7 +59,7 @@ class NetworkHandler {
   }
 
   // Helper function to wait for network events after a click
-  static async waitForNetworkEvents(page, clickStartTime, elementInfo, networkEvents, matchedNetworkEventKeys, extractEventsFromNetworkDataFn) {
+  static async waitForClickNetworkEvents(page, clickStartTime, elementInfo, networkEvents, matchedNetworkEventKeys, extractEventsFromNetworkDataFn) {
     console.log(`⏳ Waiting ${CONFIG.CLICK.eventDelay/1000}s for network events after clicking "${elementInfo.textContent}"...`);
     
     // Wait the full event delay time
@@ -173,6 +173,74 @@ class NetworkHandler {
     }
     
     return false;
+  }
+
+  /**
+   * Wait for form network events and extract GA4 event data
+   * This method waits for events and immediately extracts the GA4 data from network requests
+   * @param {Object} options - Configuration options
+   * @param {Page} options.page - Playwright page object
+   * @param {number} options.startTime - Action start timestamp
+   * @param {Array} options.networkEvents - Array of all network events
+   * @param {Function} options.extractEventsFromNetworkData - Function to extract events
+   * @param {number} options.timeout - How long to wait (default: CONFIG.FORM.eventDelay)
+   * @param {Object} options.actionInfo - Info about the action for logging
+   */
+  static async waitForFormNetworkEvents(options) {
+    const {
+      page,
+      startTime,
+      networkEvents,
+      extractEventsFromNetworkData,
+      timeout = CONFIG.FORM.eventDelay,
+      actionInfo = {}
+    } = options;
+    
+    const actionDescription = `${actionInfo.action}_${actionInfo.type}`;
+    console.log(`🔍 Waiting ${timeout/1000}s for events after ${actionDescription}...`);
+    
+    // Wait the full timeout period
+    await page.waitForTimeout(timeout);
+    
+    const endTime = Date.now();
+    
+    // Get ALL events that occurred between action start and now
+    const eventsInWindow = networkEvents.filter(event => 
+      event.timestamp >= startTime && event.timestamp <= endTime
+    );
+    
+    console.log(`📡 Found ${eventsInWindow.length} total events in ${timeout/1000}s window`);
+    
+    // Extract event details using the same parser as click tester
+    const processedEvents = [];
+    
+    eventsInWindow.forEach(event => {
+      const extractedEvents = extractEventsFromNetworkData(event);
+      if (extractedEvents.length > 0) {
+        extractedEvents.forEach(extractedEvent => {
+          processedEvents.push({
+            ...event,
+            eventName: extractedEvent.eventName,
+            eventAction: extractedEvent.eventAction,
+            eventLabel: extractedEvent.eventLabel,
+            extractedParams: extractedEvent
+          });
+        });
+      } else {
+        // Include raw event even if no extracted params
+        processedEvents.push({
+          ...event,
+          eventName: 'unknown'
+        });
+      }
+    });
+    
+    console.log(`📊 Processed ${processedEvents.length} events with extracted data`);
+    processedEvents.forEach((event, idx) => {
+      console.log(`   ${idx + 1}. ${new Date(event.timestamp).toLocaleTimeString()} - ${event.eventName || 'unknown'}`);
+    });
+    
+    return processedEvents;
   }
 }
 

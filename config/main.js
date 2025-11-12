@@ -22,7 +22,7 @@ const CONFIG = {
 
   // Form Test Scenarios - which tests to run
   FORM_TEST_SCENARIOS: {
-    individualFields: true,      // Test each field individually with blur events
+    individualFields: false,      // Test each field individually with blur events
     validSubmission: true,        // Submit form with valid data
     emptySubmission: true,        // Submit empty form to check validation
     invalidSubmission: true       // Submit form with invalid data

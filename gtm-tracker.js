@@ -37,8 +37,6 @@ const { chromium } = require('playwright');
 const ReportGenerator = require('./utils/report-generator');
 const EventParser = require('./utils/event-parser');
 const EventClassifier = require('./utils/event-classifier');
-const ElementHandler = require('./utils/element-handler');
-const NetworkHandler = require('./utils/network-handler');
 const ClickTester = require('./testers/click-tester');
 const ScrollTester = require('./testers/scroll-tester');
 const FormTester = require('./testers/form-tester');
@@ -121,18 +119,6 @@ class GTMTracker {
       return EventClassifier.filterEventsByType(events, type, this.clickEvents);
     };
   }
-
-  async waitForNetworkEvents(clickStartTime, elementInfo) {
-    return NetworkHandler.waitForNetworkEvents(
-      this.page, 
-      clickStartTime, 
-      elementInfo, 
-      this.networkEvents, 
-      this.matchedNetworkEventKeys, 
-      this.createExtractEventsFromNetworkData()
-    );
-  }
-
 
   async init() {
     console.log('Browser launched');
