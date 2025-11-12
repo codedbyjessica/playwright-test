@@ -631,6 +631,9 @@ class GTMTracker {
       console.log(`🔍 DEBUG: Network events array:`, this.networkEvents.map(e => ({ type: e.type, url: e.url?.substring(0, 50) })));
       
       const reportStart = Date.now();
+      const endTime = Date.now();
+      const totalTime = endTime - startTime;
+      
       await this.reportGenerator.generateHTMLReport(
         this.options,
         this.networkEvents,
@@ -638,11 +641,15 @@ class GTMTracker {
         this.scrollEvents,
         this.createExtractEventsFromNetworkData(),
         this.createFilterEventsByType(),
-        this.formTestResults
+        this.formTestResults,
+        {
+          startTime,
+          endTime,
+          totalTime
+        }
       );
       console.log(`✅ Reports generated in ${Date.now() - reportStart}ms`);
       
-      const totalTime = Date.now() - startTime;
       console.log(`🎉 Test completed successfully in ${totalTime}ms (${(totalTime/1000).toFixed(1)}s)`);
       
     } catch (error) {
@@ -651,6 +658,9 @@ class GTMTracker {
       // Always try to generate a report even if there's an error
       try {
         console.log('\n📋 Generating report despite error...');
+        const endTime = Date.now();
+        const totalTime = endTime - startTime;
+        
         await this.reportGenerator.generateHTMLReport(
           this.options,
           this.networkEvents,
@@ -658,7 +668,12 @@ class GTMTracker {
           this.scrollEvents,
           this.createExtractEventsFromNetworkData(),
           this.createFilterEventsByType(),
-          this.formTestResults
+          this.formTestResults,
+          {
+            startTime,
+            endTime,
+            totalTime
+          }
         );
         console.log('✅ Report generated successfully despite error');
       } catch (reportError) {

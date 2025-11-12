@@ -327,6 +327,8 @@ class FormTester {
       this.log('ℹ️  No fields configured - submitting form without pre-filling');
     }
     
+    await this.page.waitForTimeout(CONFIG.FORM.submitDelay);
+
     // Submit the form immediately and capture the submit timestamp
     this.log('🚀 Submitting form with valid data...');
     console.log("submit button selector", this.config.submitButtonSelector);
@@ -428,6 +430,8 @@ class FormTester {
       this.log('⏭️  No fields configured - skipping invalid submission test');
       return;
     }
+
+    await this.page.waitForTimeout(CONFIG.FORM.submitDelay);
     
     // Submit the form immediately and capture the submit timestamp
     this.log('🚀 Submitting form with invalid data...');

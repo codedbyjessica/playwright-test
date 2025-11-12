@@ -13,8 +13,8 @@ const CONFIG = {
   // ============================================================================
 
   RUN_GA_CATEGORIES: {
-    click: false,
-    scroll: false,
+    click: true,
+    scroll: true,
     page_view: true,
     exit_modal: false,
     forms: true                   // Enable form testing
@@ -22,26 +22,22 @@ const CONFIG = {
 
   // Form Test Scenarios - which tests to run
   FORM_TEST_SCENARIOS: {
-    individualFields: false,      // Test each field individually with blur events
+    individualFields: true,      // Test each field individually with blur events
     validSubmission: true,        // Submit form with valid data
     emptySubmission: true,        // Submit empty form to check validation
-    invalidSubmission: false       // Submit form with invalid data
+    invalidSubmission: true       // Submit form with invalid data
   },
 
   REPORT_GENERATION: {
     html: true,
     csv: true,
-    json: true,
-  },
-
-  ARD_ANALYSIS: {
-    enabled: true,
+    json: false,
   },
 
   ARD_REPORT_GENERATION: {
     html: true,
-    csv: true,
-    json: true,
+    csv: false,
+    json: false,
   },
 
 
@@ -144,7 +140,7 @@ const CONFIG = {
     // Timing
     fieldFillDelay: 8000,       // Delay between filling fields (for GA4 events)
     blurDelay: 1000,            // Delay after blur event
-    submitDelay: 2000,          // Delay before submit
+    submitDelay: 5000,          // Delay before submit
     errorCheckDelay: 3000,      // Delay to check for errors after submit
     successCheckDelay: 4000,     // Delay to check for success after submit
     eventDelay: 8000,           // Delay to wait for GA4 events after submit

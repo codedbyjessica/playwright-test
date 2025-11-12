@@ -18,6 +18,7 @@ class ARDComparator {
   constructor() {
     this.ardData = [];
     this.testData = [];
+    this.siteUrl = null;  // Will be extracted from test results CSV
   }
 
   /**
@@ -92,6 +93,13 @@ class ARDComparator {
     console.log(`📊 Loading test results from: ${testCSVPath}`);
     this.testData = this.parseCSV(testCSVPath);
     console.log(`✅ Loaded ${this.testData.length} test events`);
+    
+    // Extract the full site URL from the first row if available
+    if (this.testData.length > 0 && this.testData[0]['Full Site URL']) {
+      this.siteUrl = this.testData[0]['Full Site URL'];
+      console.log(`📍 Extracted site URL: ${this.siteUrl}`);
+    }
+    
     return this.testData;
   }
 
@@ -339,13 +347,19 @@ class ARDComparator {
       let ardValue = '';
       for (const col of ard) {
         if (ardEvent[col]) {
-          ardValue = (ardEvent[col] || '').toLowerCase().trim();
+          ardValue = (ardEvent[col] || '').trim();
           break;
         }
       }
       
-      // Only check if ARD specifies a value
-      if (ardValue && testValue !== ardValue) {
+      // Skip comparison if ARD value contains $ or {} (indicates variable/placeholder)
+      if (ardValue && (ardValue.includes('$') || (ardValue.includes('{') && ardValue.includes('}')))) {
+        // Variable value - skip comparison
+        return;
+      }
+      
+      // Only check if ARD specifies a value and it doesn't match
+      if (ardValue && testValue !== ardValue.toLowerCase()) {
         result.allMatch = false;
         result.differences.push({
           parameter: testColumnName || test[0],
@@ -456,20 +470,13 @@ class ARDComparator {
                 <div class="number">${comparisonResults.summary.missingCount}</div>
                 <div class="label">Missing</div>
             </div>
-            <div class="summary-card extra">
-                <div class="number">${comparisonResults.summary.extraCount}</div>
-                <div class="label">Extra</div>
-            </div>
             <div class="summary-card mismatch">
                 <div class="number">${comparisonResults.summary.parameterMismatchCount}</div>
                 <div class="label">Mismatches</div>
             </div>
         </div>
 
-        ${this.generateMissingEventsSection(comparisonResults.missing)}
-        ${this.generateParameterMismatchSection(comparisonResults.parameterMismatch)}
-        ${this.generateExtraEventsSection(comparisonResults.extra)}
-        ${this.generateMatchingEventsSection(comparisonResults.matching)}
+        ${this.generateSimplifiedEventsList(comparisonResults)}
     </div>
 
     <script>
@@ -485,9 +492,285 @@ class ARDComparator {
                 icon.textContent = '▼';
             }
         }
+        
+        function toggleCategory(groupIdx) {
+            const rows = document.querySelectorAll('.occurrence-row-' + groupIdx);
+            const arrow = document.querySelector('.category-arrow-' + groupIdx);
+            
+            if (rows.length === 0) return;
+            
+            const isVisible = rows[0].style.display !== 'none';
+            
+            rows.forEach(row => {
+                row.style.display = isVisible ? 'none' : 'table-row';
+            });
+            
+            if (arrow) {
+                arrow.style.transform = isVisible ? 'rotate(-90deg)' : 'rotate(0deg)';
+            }
+        }
     </script>
 </body>
 </html>`;
+  }
+
+  /**
+   * Generate simplified flat list of all events grouped by event name
+   */
+  generateSimplifiedEventsList(comparisonResults) {
+    // Group all events by event name (ARD category)
+    const eventGroups = new Map();
+    
+    // Add matching events (GREEN)
+    comparisonResults.matching.forEach(event => {
+      if (!eventGroups.has(event.eventName)) {
+        eventGroups.set(event.eventName, { name: event.eventName, occurrences: [] });
+      }
+      eventGroups.get(event.eventName).occurrences.push({
+        status: 'pass',
+        icon: '✅',
+        color: '#4caf50',
+        bgColor: '#e8f5e9',
+        matchedBy: event.matchedBy,
+        trigger: event.trigger,
+        testEvent: event.testEvent,
+        ardEvent: event.ardEvent
+      });
+    });
+    
+    // Add missing events (RED)
+    comparisonResults.missing.forEach(event => {
+      if (!eventGroups.has(event.eventName)) {
+        eventGroups.set(event.eventName, { name: event.eventName, occurrences: [] });
+      }
+      eventGroups.get(event.eventName).occurrences.push({
+        status: 'fail',
+        icon: '❌',
+        color: '#f44336',
+        bgColor: '#ffebee',
+        reason: 'Required by ARD but not found in test',
+        expectedTrigger: event.expectedTrigger,
+        ardEvent: event.ardEvent
+      });
+    });
+    
+    // Add parameter mismatches (YELLOW)
+    comparisonResults.parameterMismatch.forEach(event => {
+      if (!eventGroups.has(event.eventName)) {
+        eventGroups.set(event.eventName, { name: event.eventName, occurrences: [] });
+      }
+      eventGroups.get(event.eventName).occurrences.push({
+        status: 'warning',
+        icon: '⚠️',
+        color: '#ff9800',
+        bgColor: '#fff3e0',
+        matchedBy: event.matchedBy,
+        differences: event.differences,
+        testEvent: event.testEvent,
+        ardEvent: event.ardEvent
+      });
+    });
+    
+    // Add extra events (group under their event name) - mark as PASS since they exist
+    comparisonResults.extra.forEach(event => {
+      if (!eventGroups.has(event.eventName)) {
+        eventGroups.set(event.eventName, { name: event.eventName, occurrences: [] });
+      }
+      eventGroups.get(event.eventName).occurrences.push({
+        status: 'pass',
+        icon: '✅',
+        color: '#4caf50',
+        bgColor: '#e8f5e9',
+        testEvent: event.testEvent
+      });
+    });
+    
+    // Convert to array and sort by event name
+    const sortedGroups = Array.from(eventGroups.values()).sort((a, b) => 
+      a.name.localeCompare(b.name)
+    );
+    
+    // Calculate total occurrences
+    const totalOccurrences = sortedGroups.reduce((sum, group) => sum + group.occurrences.length, 0);
+    
+    // Generate HTML
+    return `
+      <div class="section">
+        <h2>📋 All Events by Category (${sortedGroups.length} categories, ${totalOccurrences} total occurrences)</h2>
+        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+          <thead>
+            <tr style="background: #f5f5f5; border-bottom: 2px solid #ddd;">
+              <th style="padding: 12px; text-align: left; width: 50px;">#</th>
+              <th style="padding: 12px; text-align: left;">Event Name</th>
+              <th style="padding: 12px; text-align: left; width: 120px;">Status</th>
+              <th style="padding: 12px; text-align: left;">Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedGroups.map((group, groupIdx) => {
+              // Get the "best" status for the group (for the category row)
+              // Priority: fail > warning > pass
+              const statusOrder = { 'fail': 1, 'warning': 2, 'pass': 3 };
+              const groupStatus = group.occurrences.reduce((best, occ) => 
+                statusOrder[occ.status] < statusOrder[best.status] ? occ : best
+              );
+              
+              // Extract ARD expectations from the first ARD event in the group
+              const getParam = (event, paramNames) => {
+                if (!event) return '';
+                for (const name of paramNames) {
+                  if (event[name]) return event[name];
+                }
+                return '';
+              };
+              
+              const ardEvent = group.occurrences.find(occ => occ.ardEvent)?.ardEvent;
+              let ardExpectations = '';
+              if (ardEvent) {
+                const ardCategory = getParam(ardEvent, ['event_category', 'Event Category']);
+                const ardAction = getParam(ardEvent, ['event_action', 'Event Action']);
+                const ardLabel = getParam(ardEvent, ['event_label', 'Event Label']);
+                
+                const expectations = [];
+                if (ardCategory) expectations.push('Category: ' + ardCategory);
+                if (ardAction) expectations.push('Action: ' + ardAction);
+                if (ardLabel) expectations.push('Label: ' + ardLabel);
+                
+                if (expectations.length > 0) {
+                  ardExpectations = '<div style="color: #666; font-size: 0.85em; font-weight: normal; margin-top: 4px;">📋 ARD expects: ' + expectations.join(' • ') + '</div>';
+                }
+              }
+              
+              // Count only non-missing occurrences for display
+              const actualOccurrences = group.occurrences.filter(occ => occ.status !== 'fail').length;
+              const isMissingOnly = group.occurrences.every(occ => occ.status === 'fail');
+              
+              // Format occurrence count
+              let occurrenceText;
+              if (isMissingOnly) {
+                occurrenceText = '<span style="color: #f44336;">0 occurrences</span>';
+              } else {
+                occurrenceText = `${actualOccurrences} occurrence${actualOccurrences !== 1 ? 's' : ''}`;
+              }
+              
+              // Determine background color based on status
+              let bgColor, hoverColor;
+              if (groupStatus.status === 'pass') {
+                bgColor = '#e8f5e9';  // Light green
+                hoverColor = '#c8e6c9';  // Darker green on hover
+              } else if (groupStatus.status === 'fail') {
+                bgColor = '#ffebee';  // Light red
+                hoverColor = '#ffcdd2';  // Darker red on hover
+              } else if (groupStatus.status === 'warning') {
+                bgColor = '#fff3e0';  // Light orange
+                hoverColor = '#ffe0b2';  // Darker orange on hover
+              }
+              
+              return `
+                <!-- Category Header Row -->
+                <tr onclick="toggleCategory(${groupIdx})" style="border-bottom: 2px solid #ccc; background: ${bgColor}; cursor: pointer; user-select: none;" onmouseover="this.style.background='${hoverColor}'" onmouseout="this.style.background='${bgColor}'">
+                  <td style="padding: 15px 12px; text-align: center; font-weight: bold; color: #666;">
+                    <span class="category-arrow-${groupIdx}" style="display: inline-block; transition: transform 0.3s; transform: rotate(-90deg);">▼</span>
+                  </td>
+                  <td colspan="2" style="padding: 15px 12px;">
+                    <div style="font-weight: bold; font-size: 1.1em; color: #333;">
+                      ${group.name}
+                      <span style="color: #999; font-size: 0.85em; font-weight: normal; margin-left: 8px;">(${occurrenceText})</span>
+                    </div>
+                    ${ardExpectations}
+                  </td>
+                  <td style="padding: 15px 12px;">
+                    <span style="background: ${groupStatus.color}; color: white; padding: 4px 12px; border-radius: 15px; font-size: 0.85em; font-weight: 600;">
+                      ${groupStatus.status.toUpperCase()}
+                    </span>
+                  </td>
+                </tr>
+                
+                <!-- Individual Occurrences -->
+                ${group.occurrences.map((occurrence, occIdx) => {
+                  // Extract event parameters for display
+                  const getParam = (event, paramNames) => {
+                    if (!event) return '';
+                    for (const name of paramNames) {
+                      if (event[name]) return event[name];
+                    }
+                    return '';
+                  };
+                  
+                  const eventData = occurrence.testEvent || occurrence.ardEvent || {};
+                  const eventName = getParam(eventData, ['Event name', 'Event Name', 'event_name', 'eventName']);
+                  const eventCategory = getParam(eventData, ['Event Category', 'event_category', 'eventCategory', 'Primary GA4 Event Category']);
+                  const eventAction = getParam(eventData, ['Event Action', 'event_action', 'eventAction', 'Primary GA4 Event Action']);
+                  const eventLabel = getParam(eventData, ['Event Label', 'event_label', 'eventLabel', 'Primary GA4 Event Label']);
+                  const timestamp = getParam(eventData, ['Timestamp', 'timestamp']);
+                  
+                  // Format timestamp if available
+                  let formattedTimestamp = '';
+                  if (timestamp) {
+                    try {
+                      const date = new Date(parseInt(timestamp) || timestamp);
+                      formattedTimestamp = date.toLocaleTimeString();
+                    } catch (e) {
+                      formattedTimestamp = timestamp;
+                    }
+                  }
+                  
+                  return `
+                  <tr class="occurrence-row-${groupIdx}" style="border-bottom: 1px solid #e8e8e8; background: ${occurrence.bgColor}; display: none;">
+                    <td style="padding: 10px 12px; text-align: center; font-size: 1.2em; padding-left: 30px;">${occurrence.icon}</td>
+                    <td style="padding: 10px 12px; padding-left: 30px; font-size: 0.85em;">
+                      <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; color: #666;">
+                        ${eventName ? `
+                          <div style="font-weight: 600; color: #555;">Event Name:</div>
+                          <div>${eventName}</div>
+                        ` : ''}
+                        ${eventCategory ? `
+                          <div style="font-weight: 600; color: #555;">Category:</div>
+                          <div>${eventCategory}</div>
+                        ` : ''}
+                        ${eventAction ? `
+                          <div style="font-weight: 600; color: #555;">Action:</div>
+                          <div>${eventAction}</div>
+                        ` : ''}
+                        ${eventLabel ? `
+                          <div style="font-weight: 600; color: #555;">Label:</div>
+                          <div>${eventLabel}</div>
+                        ` : ''}
+                        ${formattedTimestamp ? `
+                          <div style="font-weight: 600; color: #555;">Timestamp:</div>
+                          <div>${formattedTimestamp}</div>
+                        ` : ''}
+                      </div>
+                      ${occurrence.matchedBy === 'event_category' ? '<div style="color: #ff9800; font-size: 0.85em; margin-top: 4px;">(matched by category)</div>' : ''}
+                      ${occurrence.reason ? `<div style="color: #999; font-size: 0.8em; margin-top: 4px; font-style: italic;">${occurrence.reason}</div>` : ''}
+                    </td>
+                    <td style="padding: 10px 12px;">
+                      <span style="background: ${occurrence.color}; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600;">
+                        ${occurrence.status.toUpperCase()}
+                      </span>
+                    </td>
+                    <td style="padding: 10px 12px; font-size: 0.85em;">
+                      ${occurrence.differences && occurrence.differences.length > 0 ? `
+                        <div>
+                          <strong style="color: #ff9800;">Parameter Mismatches:</strong>
+                          <ul style="margin: 4px 0 0 16px; color: #666; font-size: 0.95em;">
+                            ${occurrence.differences.map(diff => `
+                              <li><strong>${diff.parameter}:</strong> "${diff.expected}" ≠ "${diff.actual}"</li>
+                            `).join('')}
+                          </ul>
+                        </div>
+                      ` : ''}
+                      ${!occurrence.differences || occurrence.differences.length === 0 ? `<span style="color: #999;">—</span>` : ''}
+                    </td>
+                  </tr>
+                `;
+                }).join('')}
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   generateMissingEventsSection(missingEvents) {

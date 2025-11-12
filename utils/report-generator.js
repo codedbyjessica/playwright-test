@@ -254,42 +254,82 @@ class ReportGenerator {
       `;
     }
 
-    const pageviewHtml = pageviewEvents.map(({ event, extractedEvents }, idx) => {
-      const firstEvent = extractedEvents[0];
+    // Group pageviews by URL and time (within 1 second window = duplicates)
+    const groupedPageviews = [];
+    const processedIndices = new Set();
+    
+    pageviewEvents.forEach((pageview, idx) => {
+      if (processedIndices.has(idx)) return;
+      
+      const firstEvent = pageview.extractedEvents[0];
       const pageUrl = firstEvent.fullURL || 'URL not available';
+      const timestamp = pageview.event.timestamp;
+      
+      // Find duplicates (same URL, within 1 second)
+      const duplicates = [pageview];
+      processedIndices.add(idx);
+      
+      for (let i = idx + 1; i < pageviewEvents.length; i++) {
+        if (processedIndices.has(i)) continue;
+        
+        const otherPageview = pageviewEvents[i];
+        const otherEvent = otherPageview.extractedEvents[0];
+        const otherUrl = otherEvent.fullURL || 'URL not available';
+        const otherTimestamp = otherPageview.event.timestamp;
+        
+        // Check if same URL and within 1 second
+        if (pageUrl === otherUrl && Math.abs(timestamp - otherTimestamp) < 1000) {
+          duplicates.push(otherPageview);
+          processedIndices.add(i);
+        }
+      }
+      
+      groupedPageviews.push({
+        pageUrl,
+        timestamp,
+        duplicates
+      });
+    });
+
+    const pageviewHtml = groupedPageviews.map((group, idx) => {
+      const isDuplicate = group.duplicates.length > 1;
+      const timeStr = new Date(group.timestamp).toLocaleTimeString();
       
       return `
-        <div class="event-item pageview-item" style="background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+        <div class="event-item pageview-item" style="background-color: ${isDuplicate ? '#fff3e0' : '#f8f9fa'}; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
           <div class="pageview-header" style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap;">
             <span class="event-type" style="background: #28a745; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">PAGEVIEW</span>
-            <span style="color: #666; font-size: 0.9em;">${new Date(event.timestamp).toLocaleTimeString()}</span>
+            <span style="color: #666; font-size: 0.9em;">${timeStr}${isDuplicate ? ` (Triggered ${group.duplicates.length}x)` : ''}</span>
           </div>
           
           <div class="pageview-url" style="margin-bottom: 10px;">
-            <strong>Page URL:</strong> ${pageUrl}
-
+            <strong>Page URL:</strong> ${group.pageUrl}
           </div>
           
-          ${extractedEvents.map(evt => {
-            const parameterHtml = this.generateParameterHTML(evt);
-            return `
-              <div style="margin: 10px 0; padding: 10px; background: #f0f8ff; border-radius: 5px; border-left: 3px solid #2196f3;">
-                <strong>Event ${evt.line} (${evt.source || 'POST'}):</strong><br>
-                ${parameterHtml}
-                ${evt.triggerAction ? `<div><strong>trigger_action:</strong> ${evt.triggerAction}</div>` : ''}
-              </div>
-            `;
+          ${group.duplicates.map((pageview, dupIdx) => {
+            return pageview.extractedEvents.map(evt => {
+              const parameterHtml = this.generateParameterHTML(evt);
+              return `
+                <div style="margin: 10px 0; padding: 10px; background: #f0f8ff; border-radius: 5px; border-left: 3px solid #2196f3;">
+                  <strong>Event ${dupIdx + 1} (${evt.source || 'POST'}):</strong><br>
+                  ${parameterHtml}
+                  ${evt.triggerAction ? `<div><strong>trigger_action:</strong> ${evt.triggerAction}</div>` : ''}
+                </div>
+              `;
+            }).join('');
           }).join('')}
           
-          <div class="network-url" style="margin-top: 10px;">
-            <div class="accordion-header" onclick="toggleAccordion(this)" style="cursor: pointer; padding: 8px 12px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; font-weight: bold; color: #333; font-size: 0.9em;">
-              <span class="accordion-icon">▶</span>
-              <span class="url-preview">Network Request URL</span>
+          ${group.duplicates.map((pageview, dupIdx) => `
+            <div class="network-url" style="margin-top: 10px;">
+              <div class="accordion-header" onclick="toggleAccordion(this)" style="cursor: pointer; padding: 8px 12px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: space-between; font-weight: bold; color: #333; font-size: 0.9em;">
+                <span class="accordion-icon">▶</span>
+                <span class="url-preview">Network Request URL ${isDuplicate ? `(${dupIdx + 1}/${group.duplicates.length})` : ''}</span>
+              </div>
+              <div class="accordion-content" style="display: none;">
+                <div class="full-url" style="padding: 8px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; font-size: 0.8em; color: #555; margin-top: 4px; font-family: monospace; word-break: break-all;">${pageview.event.url}</div>
+              </div>
             </div>
-            <div class="accordion-content" style="display: none;">
-              <div class="full-url" style="padding: 8px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; font-size: 0.8em; color: #555; margin-top: 4px; font-family: monospace; word-break: break-all;">${event.url}</div>
-            </div>
-          </div>
+          `).join('')}
         </div>
       `;
     }).join('');
@@ -297,7 +337,7 @@ class ReportGenerator {
     return `
       <div class="subsection">
         <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
-          <span class="accordion-icon">▶</span> ${icon} ${title} (${pageviewEvents.length})
+          <span class="accordion-icon">▶</span> ${icon} ${title} (${groupedPageviews.length} unique)
         </h3>
         <div class="accordion-content" style="display: none;">
           <div id="pageviewEventsContainer">
@@ -408,7 +448,7 @@ class ReportGenerator {
 
     const fieldTestsHTML = formTestResults.fieldTests.length > 0 ? `
       <div class="form-test-subsection">
-        <h4>📝 Individual Field Tests (${formTestResults.fieldTests.length})</h4>
+        <h4>📝 Field Completion Tests (${formTestResults.fieldTests.length})</h4>
         ${formTestResults.fieldTests.map((test, idx) => {
           const statusBadge = test.result.success 
             ? `<span class="event-type" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">SUCCESS</span>`
@@ -489,19 +529,6 @@ class ReportGenerator {
           console.log("submission test", test);
           let statusBadge = '';
           let statusColor = '';
-          
-          if (test.testType === 'valid_submission') {
-            statusBadge = test.success 
-              ? `<span class="event-type" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">SUCCESS</span>`
-              : `<span class="event-type" style="background: #ef5350; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">FAILED</span>`;
-            statusColor = test.success ? '#4caf50' : '#ef5350';
-          } else {
-            // Error testing scenarios
-            const errorsFound = test.errorResults ? test.errorResults.filter(e => e.found).length : 0;
-            const totalExpected = test.errorResults ? test.errorResults.length : 0;
-            statusBadge = `<span class="event-type" style="background: #ff9800; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${errorsFound}/${totalExpected} ERRORS</span>`;
-            statusColor = errorsFound > 0 ? '#ff9800' : '#2196f3';
-          }
 
           const networkEventsBadge = test.networkEvents && test.networkEvents.length > 0
             ? `<span class="event-type" style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">${test.networkEvents.length} GA4 EVENTS</span>`
@@ -603,6 +630,7 @@ class ReportGenerator {
   // Build all events array - shared logic for CSV and JSON
   buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents, extractEventsFromNetworkData) {
     const allEvents = [];
+    const seenNetworkUrls = new Set(); // Track which network URLs we've already processed
     
     // Ensure all parameters are valid (safety check)
     clickEvents = Array.isArray(clickEvents) ? clickEvents : [];
@@ -624,15 +652,13 @@ class ReportGenerator {
           const hasMatchingEvent = click.matchedNetworkEvents && click.matchedNetworkEvents.length > 0;
           
           if (hasMatchingEvent) {
-            // Filter out excluded events (scroll, pageview, form, etc.)
-            const EventClassifier = require('../utils/event-classifier');
-            const filteredEvents = click.matchedNetworkEvents.filter(networkEvent => 
-              !EventClassifier.shouldExcludeFromClickMatch(networkEvent.url, networkEvent.postData)
-            );
             
-            if (filteredEvents.length > 0) {
+            if (click.matchedNetworkEvents.length > 0) {
               // Create entry for each GA4 event
-              filteredEvents.forEach(networkEvent => {
+              click.matchedNetworkEvents.forEach(networkEvent => {
+                // Mark this network URL as seen
+                seenNetworkUrls.add(networkEvent.url);
+                
                 const extractedEvents = extractEventsFromNetworkData(networkEvent);
                 
                 extractedEvents.forEach(event => {
@@ -711,6 +737,9 @@ class ReportGenerator {
         .sort((a, b) => a.timestamp - b.timestamp)
         .forEach((scroll, scrollIdx) => {
           scroll.matchedNetworkEvents.forEach(networkEvent => {
+            // Mark this network URL as seen
+            seenNetworkUrls.add(networkEvent.url);
+            
             const extractedEvents = extractEventsFromNetworkData(networkEvent);
             
             extractedEvents.forEach(event => {
@@ -738,11 +767,14 @@ class ReportGenerator {
         });
     }
     
-    // Add form events
-    if (formTestResults && formTestResults.testResults) {
-      formTestResults.testResults.forEach((formTest, formIdx) => {
+    // Add form submission events
+    if (formTestResults && formTestResults.submissionTests && formTestResults.submissionTests.length > 0) {
+      formTestResults.submissionTests.forEach((formTest, formIdx) => {
         if (formTest.networkEvents && formTest.networkEvents.length > 0) {
           formTest.networkEvents.forEach(networkEvent => {
+            // Mark this network URL as seen
+            seenNetworkUrls.add(networkEvent.url);
+            
             const extractedEvents = extractEventsFromNetworkData(networkEvent);
             
             extractedEvents.forEach(event => {
@@ -771,41 +803,67 @@ class ReportGenerator {
       });
     }
     
-    // Add pageview and other unmatched events
-    if (networkEvents && networkEvents.length > 0) {
-      networkEvents
-        .filter(event => event.type === 'request' && event.source !== 'form_testing')
-        .forEach(networkEvent => {
-        const extractedEvents = extractEventsFromNetworkData(networkEvent);
-        
-        extractedEvents.forEach(event => {
-          // Check if this event is already included (matched to a trigger)
-          const alreadyIncluded = allEvents.some(e => 
-            e.networkUrl === networkEvent.url && 
-            Math.abs(e.timestamp - networkEvent.timestamp) < 100
-          );
-          
-          if (!alreadyIncluded) {
+    // Add form field events
+    if (formTestResults && formTestResults.fieldTests && formTestResults.fieldTests.length > 0) {
+      formTestResults.fieldTests.forEach((fieldTest, fieldIdx) => {
+        if (fieldTest.result && fieldTest.result.networkEvents && fieldTest.result.networkEvents.length > 0) {
+          fieldTest.result.networkEvents.forEach(event => {
             allEvents.push({
-              timestamp: networkEvent.timestamp,
-              triggerType: 'pageview',
-              triggerOrder: '',
-              elementType: '',
-              elementText: '',
+              timestamp: fieldTest.timestamp,
+              triggerType: `form_field_${fieldTest.testType}`,
+              triggerOrder: fieldIdx + 1,
+              elementType: 'form_field',
+              elementText: fieldTest.field || '',
               elementHref: '',
               elementSelector: '',
               scrollDepth: '',
-              formCode: '',
-              triggerTime: new Date(networkEvent.timestamp).toLocaleTimeString(),
+              formCode: formTestResults.formConfig?.tracking?.formCode || '',
+              triggerTime: new Date(fieldTest.timestamp).toLocaleTimeString(),
               ardEventName: event.eventName || '',  // ARD-friendly name
               eventName: event.eventName || '',
               eventCategory: event.eventCategory || '',
               eventAction: event.eventAction || '',
               eventLabel: event.eventLabel || '',
-              timeAfterTrigger: '',
-              networkUrl: networkEvent.url
+              timeAfterTrigger: event.timestamp ? (event.timestamp - fieldTest.timestamp) : '',
+              networkUrl: event.url || ''
             });
-          }
+          });
+        }
+      });
+    }
+    
+    // Add pageview and other unmatched events
+    if (networkEvents && networkEvents.length > 0) {
+      networkEvents
+        .filter(event => event.type === 'request' && event.source !== 'form_testing')
+        .forEach(networkEvent => {
+        // Skip if we've already added this network URL from clicks, scrolls, or forms
+        if (seenNetworkUrls.has(networkEvent.url)) {
+          return; // Skip this event - already included
+        }
+        
+        const extractedEvents = extractEventsFromNetworkData(networkEvent);
+        
+        extractedEvents.forEach(event => {
+          allEvents.push({
+            timestamp: networkEvent.timestamp,
+            triggerType: 'pageview',
+            triggerOrder: '',
+            elementType: '',
+            elementText: '',
+            elementHref: '',
+            elementSelector: '',
+            scrollDepth: '',
+            formCode: '',
+            triggerTime: new Date(networkEvent.timestamp).toLocaleTimeString(),
+            ardEventName: event.eventName || '',  // ARD-friendly name
+            eventName: event.eventName || '',
+            eventCategory: event.eventCategory || '',
+            eventAction: event.eventAction || '',
+            eventLabel: event.eventLabel || '',
+            timeAfterTrigger: '',
+            networkUrl: networkEvent.url
+          });
         });
       });
     }
@@ -813,11 +871,16 @@ class ReportGenerator {
     // Sort all events by timestamp
     allEvents.sort((a, b) => a.timestamp - b.timestamp);
     
+    console.log(`📊 CSV/JSON Event Summary:`);
+    console.log(`   Total events in CSV/JSON: ${allEvents.length}`);
+    console.log(`   Unique network URLs processed: ${seenNetworkUrls.size}`);
+    console.log(`   Breakdown: ${allEvents.reduce((acc, e) => { acc[e.triggerType] = (acc[e.triggerType] || 0) + 1; return acc; }, {})}`);
+    
     return allEvents;
   }
   
   // Generate CSV report
-  async generateCSVReport(testResultsDir, reportFilename, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData) {
+  async generateCSVReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData) {
     console.log('\n📊 === GENERATING CSV REPORT ===');
     
     // Use shared logic to build events array
@@ -837,6 +900,7 @@ class ReportGenerator {
     
     // Add CSV header - simplified for ARD comparison
     csvRows.push([
+      'Full Site URL',
       'Element Text',
       'Event name',
       'Event Category',
@@ -849,6 +913,7 @@ class ReportGenerator {
     // Add all events to CSV
     allEvents.forEach(event => {
       csvRows.push([
+        cleanValue(options.url),  // Full site URL from command line
         cleanValue(event.elementText),
         cleanValue(event.ardEventName || event.eventName),  // Event name (ARD-friendly)
         cleanValue(event.eventCategory),
@@ -896,7 +961,7 @@ class ReportGenerator {
   }
 
   // Generate HTML report
-  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null) {
+  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null, timingInfo = null) {
     console.log('\n📋 === NETWORK EVENTS REPORT ===');
     
     console.log(`🔍 REPORT DEBUG: Received ${networkEvents.length} network events`);
@@ -930,7 +995,7 @@ class ReportGenerator {
     console.log(`\n📋 Generating ${enabledReports.join(', ')} report${enabledReports.length > 1 ? 's' : ''}...`);
     
     if (CONFIG.REPORT_GENERATION.csv) {
-      await this.generateCSVReport(testResultsDir, reportFilename, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData);
+      await this.generateCSVReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData);
     }
 
     if (CONFIG.REPORT_GENERATION.json) {
@@ -938,7 +1003,7 @@ class ReportGenerator {
     }
 
     if (CONFIG.REPORT_GENERATION.html) {
-      const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults);
+      const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults, timingInfo);
       const htmlPath = path.join(testResultsDir, `${reportFilename}.html`);
       fs.writeFileSync(htmlPath, html);
       console.log(`\n🌐 HTML report saved to ${htmlPath}`);
@@ -946,7 +1011,32 @@ class ReportGenerator {
   }
 
   // Generate the main HTML content
-  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null) {
+  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null, timingInfo = null) {
+    // Format timing information if available
+    let timingHTML = '';
+    if (timingInfo) {
+      const startDate = new Date(timingInfo.startTime);
+      const endDate = new Date(timingInfo.endTime);
+      const durationSeconds = (timingInfo.totalTime / 1000).toFixed(2);
+      const durationMinutes = (timingInfo.totalTime / 60000).toFixed(2);
+      
+      timingHTML = `
+        <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.1); border-radius: 8px; font-size: 0.9em;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+            <div>
+              <strong>⏱️ Started:</strong> ${startDate.toLocaleTimeString()}
+            </div>
+            <div>
+              <strong>🏁 Finished:</strong> ${endDate.toLocaleTimeString()}
+            </div>
+            <div>
+              <strong>⏳ Duration:</strong> ${durationSeconds}s (${durationMinutes}min)
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    
     return `
 <!DOCTYPE html>
 <html lang="en">
@@ -1215,6 +1305,7 @@ class ReportGenerator {
             <h1>🎯 GTM Comprehensive Tracker Report</h1>
             <h2><a href="${options.url}" target="_blank" style="color: #fff; text-decoration: underline;">${options.url}</a></h2>
             <p style="margin-top: 10px; opacity: 0.9;">Complete testing: Clicks, Scrolls, Forms & GA4 Analysis</p>
+            ${timingHTML}
         </div>
         
         <div class="stats">
@@ -1255,9 +1346,6 @@ class ReportGenerator {
             <!-- All Successful Click Events Section -->
             <div class="subsection">
                 <h3>✅ All Successful Click Events (${clickEvents.filter(click => click.success === true).length})</h3>
-                <p style="color: #666; margin-bottom: 15px; font-style: italic;">
-                    Click events from automated element interaction testing (excludes form testing).
-                </p>
                 <div id="successfulClicksContainer">
                     ${clickEvents
                         .filter(click => click.success === true)
@@ -1324,7 +1412,7 @@ class ReportGenerator {
 
                     ${formTestResults && formTestResults.summary && (formTestResults.summary.totalFieldTests > 0 || formTestResults.summary.totalSubmissionTests > 0) ? `
             <div class="section">
-                <h2>📝 Form Testing Results (Isolated)</h2>
+                <h2>📝 Form Testing Results</h2>
                 ${this.generateFormTestingHTML(formTestResults)}
             </div>
             ` : ''}

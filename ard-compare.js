@@ -89,12 +89,6 @@ console.log(`📊 Test Results: ${networkResultsPath}`);
 console.log(`📋 ARD Document: ${ardPath}`);
 console.log(`📝 Output Name: ${outputName}\n`);
 
-// Check if ARD analysis is enabled in config
-if (!CONFIG.ARD_ANALYSIS.enabled) {
-  console.warn('⚠️  Warning: ARD_ANALYSIS.enabled is false in config/main.js');
-  console.warn('   Continuing anyway as this is a standalone tool...\n');
-}
-
 try {
   // Load and compare
   const comparator = new ARDComparator();
@@ -151,18 +145,20 @@ try {
   let generatedFiles = [];
   
   if (CONFIG.ARD_REPORT_GENERATION.html) {
-    // Build site URL from output name (which contains the domain)
-    // e.g., "network-events-www-neffy-com-..." -> "www.neffy.com"
-    let siteUrl = outputName;
+    // Use the site URL extracted from the CSV's "Full Site URL" column
+    // If not available, fall back to extracting from filename
+    let siteUrl = comparator.siteUrl || outputName;
     
-    // Try to extract domain from filename
-    const domainMatch = outputName.match(/network-events-(.+?)-\d{4}-\d{2}-\d{2}/);
-    if (domainMatch) {
-      // Convert "www-neffy-com" to "www.neffy.com"
-      const domain = domainMatch[1].replace(/-/g, '.');
-      siteUrl = `https://${domain}`;
-    } else if (!outputName.startsWith('http')) {
-      siteUrl = `https://${outputName}`;
+    if (!siteUrl || (!siteUrl.startsWith('http') && !comparator.siteUrl)) {
+      // Try to extract domain from filename as fallback
+      const domainMatch = outputName.match(/network-events-(.+?)-\d{4}-\d{2}-\d{2}/);
+      if (domainMatch) {
+        // Convert "www-neffy-com" to "www.neffy.com"
+        const domain = domainMatch[1].replace(/-/g, '.');
+        siteUrl = `https://${domain}`;
+      } else if (!outputName.startsWith('http')) {
+        siteUrl = `https://${outputName}`;
+      }
     }
     
     const htmlReport = comparator.generateHTMLReport(comparisonResults, siteUrl, networkResultsPath, ardPath);
