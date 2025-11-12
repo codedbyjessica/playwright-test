@@ -12,6 +12,7 @@
 
 const CONFIG = require('../config/main');
 const NetworkHandler = require('../utils/network-handler');
+const { log } = require('../utils/logger');
 
 class ScrollTester {
   constructor(page, networkEvents, matchedNetworkEventKeys, extractEventsFromNetworkDataFn) {
@@ -23,28 +24,13 @@ class ScrollTester {
   }
 
   /**
-   * Wait for network events after a scroll action
-   */
-  async waitForScrollNetworkEvents(scrollStartTime, scrollInfo) {
-    return NetworkHandler.waitForScrollNetworkEvents(
-      this.page, 
-      scrollStartTime, 
-      scrollInfo, 
-      this.networkEvents, 
-      this.matchedNetworkEventKeys, 
-      this.extractEventsFromNetworkDataFn
-    );
-  }
-
-  /**
    * Main scroll testing method
    */
   async runScrollTests() {
-    console.log('📜 Starting page scroll with network event tracking...');
+    log('📜 Starting page scroll with network event tracking...');
     
     // Get page height
     const pageHeight = await this.page.evaluate(() => document.body.scrollHeight);
-    console.log(`📏 Page height: ${pageHeight}px`);
     
     // dedupe and sort scroll thresholds
     const scrollThresholds = CONFIG.SCROLL.thresholds.filter((threshold, index, self) => self.indexOf(threshold) === index).sort((a, b) => a - b);
@@ -63,24 +49,23 @@ class ScrollTester {
       // Record scroll event BEFORE scrolling
       const scrollStartTimestamp = new Date().getTime();
       
-      const exactThresholdPx = Math.round((position.percentage / 100) * pageHeight);
-      console.log(`📜 Scrolling to ${position.scrollY}px (${position.percentage}% + ${CONFIG.SCROLL.bufferPx}px buffer, threshold at ${exactThresholdPx}px)`);
-      
       // Perform the scroll
       await this.page.evaluate((y) => {
         window.scrollTo(0, y);
       }, position.scrollY);
       
-      // Wait 5 seconds for potential delayed events before capturing
-      console.log(`⏳ Waiting ${CONFIG.SCROLL.eventDelay/1000}s for delayed events after ${position.percentage}% scroll...`);
+      // Wait for potential delayed events before capturing
       await this.page.waitForTimeout(CONFIG.SCROLL.eventDelay);
       
       // Wait for any additional network events triggered by this scroll
-      const newNetworkEvents = await this.waitForScrollNetworkEvents(scrollStartTimestamp, {
-        percentage: position.percentage,
-        scrollY: position.scrollY,
-        action: 'scroll'
-      });
+      const newNetworkEvents = await NetworkHandler.waitForScrollNetworkEvents(
+        this.page, 
+        scrollStartTimestamp, 
+        position, 
+        this.networkEvents, 
+        this.matchedNetworkEventKeys, 
+        this.extractEventsFromNetworkDataFn
+      );
       
       // Record scroll event with network event matching
       this.scrollEvents.push({
@@ -95,28 +80,11 @@ class ScrollTester {
       });
     }
     
-    // End of scroll sequence - no need to scroll back to top to avoid triggering additional events
-    
-    // Log summary statistics
-    console.log('✅ Sophisticated page scroll completed');
-    console.log(`📊 Recorded ${this.scrollEvents.length} scroll actions`);
-    
-    const scrollsWithNetworkEvents = this.scrollEvents.filter(scroll => 
-      scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0
-    );
-    const thresholdScrolls = this.scrollEvents.filter(scroll => scroll.isThreshold);
-    
-    console.log(`📊 Scroll actions that triggered network events: ${scrollsWithNetworkEvents.length}`);
-    console.log(`📊 Key scroll thresholds tested: ${thresholdScrolls.length}`);
-    
-    // Log which scroll percentages triggered events
-    scrollsWithNetworkEvents.forEach(scroll => {
-      if (scroll.matchedNetworkEvents.length > 0) {
-        console.log(`  📊 ${scroll.percentage}% scroll triggered ${scroll.matchedNetworkEvents.length} network event(s)`);
-      }
-    });
+    // Log summary
+    log('✅ Scroll testing completed', 'success');
+    log(`📊 Scroll actions that triggered GA4 events: ${this.scrollEvents.filter(s => s.matchedNetworkEvents?.length > 0).length}/${this.scrollEvents.length}`);
   }
-
+  
   /**
    * Get scroll test results
    */

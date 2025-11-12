@@ -13,16 +13,16 @@ const CONFIG = {
   // ============================================================================
 
   RUN_GA_CATEGORIES: {
-    click: false,
-    scroll: false,
-    page_view: false,
+    click: true,
+    scroll: true,
+    page_view: true,
     exit_modal: false,
     forms: true                   // Enable form testing
   },
 
   // Form Test Scenarios - which tests to run
   FORM_TEST_SCENARIOS: {
-    individualFields: false,      // Test each field individually with blur events
+    individualFields: true,      // Test each field individually with blur events
     validSubmission: true,        // Submit form with valid data
     emptySubmission: true,        // Submit empty form to check validation
     invalidSubmission: true       // Submit form with invalid data
@@ -51,7 +51,7 @@ const CONFIG = {
     
     // Timing
     browserTimeout: 30000,      // Timeout for browser operations
-    pageLoadTimeout: 5000,      // Timeout for page load operations
+    pageLoadTimeout: 4000,      // Timeout for page load operations
     networkWait: 2000,          // Wait time for network events
     minEventDelay: 0,           // Minimum delay before considering an event as triggered by action
     
@@ -84,8 +84,8 @@ const CONFIG = {
   // ============================================================================
   CLICK: {
     // Timing
-    eventDelay: 8000,           // Interval between click actions (for better event capture)
-    timeout: 5000,              // Timeout for click operations
+    eventDelay: 6500,           // Interval between click actions (for better event capture)
+    timeout: 4000,              // Timeout for click operations
     waitAfterClick: 100,        // Wait time after clicking before polling
     
     // Selectors
@@ -122,7 +122,7 @@ const CONFIG = {
   // ============================================================================
   SCROLL: {
     // Timing
-    eventDelay: 5000,           // Delay between scroll action and event capture
+    eventDelay: 4000,           // Delay between scroll action and event capture
     timeout: 1000,              // Timeout for scroll operations
     
     // Scroll behavior
@@ -138,12 +138,12 @@ const CONFIG = {
   // ============================================================================
   FORM: {
     // Timing
-    fieldFillDelay: 8000,       // Delay between filling fields (for GA4 events)
+    fieldFillDelay: 6500,       // Delay between filling fields (for GA4 events)
     blurDelay: 1000,            // Delay after blur event
-    submitDelay: 5000,          // Delay before submit
+    submitDelay: 4000,          // Delay before submit
     errorCheckDelay: 3000,      // Delay to check for errors after submit
     successCheckDelay: 4000,     // Delay to check for success after submit
-    eventDelay: 8000,           // Delay to wait for GA4 events after submit
+    eventDelay: 6500,           // Delay to wait for GA4 events after submit
     timeout: 2000,              // Timeout for form operations
   },
 

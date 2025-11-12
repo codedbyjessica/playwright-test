@@ -14,6 +14,7 @@
 const CONFIG = require('../config/main');
 const ElementHandler = require('../utils/element-handler');
 const NetworkHandler = require('../utils/network-handler');
+const { log } = require('../utils/logger');
 
 class ClickTester {
   constructor(page, networkEvents, matchedNetworkEventKeys, extractEventsFromNetworkDataFn) {
@@ -29,7 +30,7 @@ class ClickTester {
    * Main click testing method
    */
   async runClickTests() {
-    console.log('🖱️ Starting click events...');
+    log('🖱️ Starting click testing...');
     
     try {
       // Store the original URL to reload between clicks
@@ -38,22 +39,18 @@ class ClickTester {
       // Get all clickable elements with more comprehensive selectors
       const clickableElements = await this.page.$$(CONFIG.CLICK.selector.join(', '));
       
-      console.log(`Found ${clickableElements.length} clickable elements`);
+      log(`Found ${clickableElements.length} clickable elements`);
       
       for (let i = 0; i < clickableElements.length; i++) {
         try {
-          console.log(`===============================================`);
-          
           // Reload page before each click to ensure clean state
           if (i > 0) {
-            console.log(`🔄 Reloading page to reset state for element ${i + 1}...`);
             await this.page.goto(originalUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.GLOBAL.browserTimeout });
             await this.page.waitForTimeout(CONFIG.GLOBAL.pageLoadTimeout);
             
             // Re-query all elements after reload
             const refreshedElements = await this.page.$$(CONFIG.CLICK.selector.join(', '));
             if (i >= refreshedElements.length) {
-              console.log(`⚠️ Element ${i + 1} no longer exists after reload, skipping`);
               continue;
             }
             clickableElements[i] = refreshedElements[i];
@@ -68,18 +65,14 @@ class ClickTester {
           let shouldSkip = false;
           for (const selector of this.excludeSelectors) {
             const matches = await element.evaluate((el, sel) => {
-              // Use CSS selector matching to check if element matches the selector
               try {
-                // Check if this element matches the selector
                 return el.matches(sel);
               } catch (e) {
-                // If selector is invalid, return false
                 return false;
               }
             }, selector);
             
             if (matches) {
-              console.log(`🚫 Skipping element: ${elementInfo.tagName} - "${elementInfo.textContent}" (matches: ${selector})`);
               shouldSkip = true;
               break;
             }
@@ -88,8 +81,6 @@ class ClickTester {
           if (shouldSkip) {
             continue;
           }
-          
-          console.log(`🖱️ Clicking element ${i + 1}/${clickableElements.length}: ${elementInfo.tagName} - "${elementInfo.textContent}"`);
           
           // Record the current network event count and timestamp before clicking
           const networkEventsBeforeClick = this.networkEvents.length;
@@ -100,9 +91,6 @@ class ClickTester {
           
           // Wait for element to be stable and clickable
           await element.waitForElementState('stable', { timeout: CONFIG.CLICK.timeout });
-          
-          // Do the click
-          console.log(`Clicking element ${i + 1}/${clickableElements.length}: ${elementInfo.tagName} "${elementInfo.textContent}"`);
           
           // For links, ensure they open in new tab/window
           if (elementInfo.tagName === 'a' && elementInfo.href) {
@@ -134,17 +122,15 @@ class ClickTester {
                 timeout: 4000,
                 clip: clip
               });
-              console.log(`📸 Captured contextual screenshot for ${elementInfo.tagName} element (${clip.width}x${clip.height}px with ${padding}px padding)`);
             } else {
               // Fallback to element screenshot if bounding box fails
               screenshotBuffer = await element.screenshot({ 
                 type: 'png',
                 timeout: 4000
               });
-              console.log(`📸 Captured fallback screenshot for ${elementInfo.tagName} element`);
             }
           } catch (screenshotError) {
-            console.log(`⚠️ Could not capture screenshot: ${screenshotError.message}`);
+            // Screenshot failed, continue without it
           }
           
           // Wait for network events within the time window
@@ -172,10 +158,11 @@ class ClickTester {
         }
       }
       
-      console.log(`✅ Click events completed. Recorded ${this.clickEvents.length} clicks`);
+      log('✅ Click testing completed', 'success');
+      log(`📊 Successful clicks: ${this.clickEvents.filter(c => c.success === true).length}, Failed: ${this.clickEvents.filter(c => c.success === false).length}`);
       
     } catch (error) {
-      console.log('⚠️ Error during click events:', error.message);
+      log(`⚠️ Error during click testing: ${error.message}`, 'error');
       // Don't re-throw - let the main run() method handle it
     }
   }

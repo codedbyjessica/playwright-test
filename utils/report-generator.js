@@ -11,6 +11,7 @@
 const path = require('path');
 const fs = require('fs');
 const CONFIG = require('../config/main');
+const EventClassifier = require('./event-classifier');
 
 class ReportGenerator {
   constructor() {
@@ -196,7 +197,7 @@ class ReportGenerator {
   }
 
   // Helper function to generate events section HTML
-  generateEventsSectionHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, eventType, title, icon) {
+  generateEventsSectionHTML(networkEvents, clickEvents, extractEventsFromNetworkData, eventType, title, icon) {
     // Filter out form testing events from main network analysis
     const nonFormNetworkEvents = networkEvents.filter(event => 
       event.type === 'request' && event.source !== 'form_testing'
@@ -204,8 +205,15 @@ class ReportGenerator {
     
     // Special handling for pageview events
     if (eventType === 'pageview') {
-      return this.generatePageviewEventsHTML(nonFormNetworkEvents, extractEventsFromNetworkData, filterEventsByType, title, icon);
+      return this.generatePageviewEventsHTML(nonFormNetworkEvents, clickEvents, extractEventsFromNetworkData, title, icon);
     }
+    
+    // Calculate count for unmatched events
+    const eventCount = nonFormNetworkEvents.filter(event => {
+      const extractedEvents = extractEventsFromNetworkData(event);
+      const filteredEvents = EventClassifier.filterEventsByType(extractedEvents, eventType, clickEvents);
+      return filteredEvents.length > 0;
+    }).length;
     
     // Check if this is the unmatched section (should be collapsed by default)
     const isCollapsed = eventType === 'unmatched';
@@ -215,13 +223,13 @@ class ReportGenerator {
     return `
       <div class="subsection">
         <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
-          <span class="accordion-icon">${arrowIcon}</span> ${icon} ${title}
+          <span class="accordion-icon">${arrowIcon}</span> ${icon} ${title} (${eventCount})
         </h3>
         <div class="accordion-content" style="${displayStyle}">
           <div id="${eventType}EventsContainer">
             ${nonFormNetworkEvents.map((event, idx) => {
               const extractedEvents = extractEventsFromNetworkData(event);
-              const filteredEvents = filterEventsByType(extractedEvents, eventType);
+              const filteredEvents = EventClassifier.filterEventsByType(extractedEvents, eventType, clickEvents);
               return filteredEvents.length > 0 ? this.generateEventHTML(event, filteredEvents) : '';
             }).join('')}
           </div>
@@ -231,13 +239,13 @@ class ReportGenerator {
   }
 
   // Specialized function for pageview events with prominent URL display
-  generatePageviewEventsHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, title, icon) {
+  generatePageviewEventsHTML(networkEvents, clickEvents, extractEventsFromNetworkData, title, icon) {
     const pageviewEvents = [];
     
     // networkEvents is already filtered to exclude form testing events
     networkEvents.forEach(event => {
       const extractedEvents = extractEventsFromNetworkData(event);
-      const filteredEvents = filterEventsByType(extractedEvents, 'pageview');
+      const filteredEvents = EventClassifier.filterEventsByType(extractedEvents, 'pageview', clickEvents);
       if (filteredEvents.length > 0) {
         pageviewEvents.push({ event, extractedEvents: filteredEvents });
       }
@@ -961,7 +969,7 @@ class ReportGenerator {
   }
 
   // Generate HTML report
-  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null, timingInfo = null) {
+  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, formTestResults = null, timingInfo = null) {
     console.log('\n📋 === NETWORK EVENTS REPORT ===');
     
     console.log(`🔍 REPORT DEBUG: Received ${networkEvents.length} network events`);
@@ -1003,7 +1011,7 @@ class ReportGenerator {
     }
 
     if (CONFIG.REPORT_GENERATION.html) {
-      const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults, timingInfo);
+      const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, formTestResults, timingInfo);
       const htmlPath = path.join(testResultsDir, `${reportFilename}.html`);
       fs.writeFileSync(htmlPath, html);
       console.log(`\n🌐 HTML report saved to ${htmlPath}`);
@@ -1011,7 +1019,7 @@ class ReportGenerator {
   }
 
   // Generate the main HTML content
-  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, filterEventsByType, formTestResults = null, timingInfo = null) {
+  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, formTestResults = null, timingInfo = null) {
     // Format timing information if available
     let timingHTML = '';
     if (timingInfo) {
@@ -1333,20 +1341,27 @@ class ReportGenerator {
         <div class="section">
             <h2>🌐 Website Interaction Analysis</h2>
             
-            ${this.generateEventsSectionHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, 'pageview', 'Pageview Events', '📄')}
+            ${this.generateEventsSectionHTML(networkEvents, clickEvents, extractEventsFromNetworkData, 'pageview', 'Pageview Events', '📄')}
             
             <!-- Scroll Actions with GA4 Events Section -->
             <div class="subsection">
-                <h3>📊 Scroll Actions with GA4 Events (${scrollEvents ? scrollEvents.filter(scroll => scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0).length : 0})</h3>
-                <div id="scrollActionsContainer">
-                    ${scrollEvents ? this.generateScrollEventsHTML(scrollEvents, extractEventsFromNetworkData) : '<p>No scroll events data available.</p>'}
+                <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
+                    <span class="accordion-icon">▼</span> 📊 Scroll Actions with GA4 Events (${scrollEvents ? scrollEvents.filter(scroll => scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0).length : 0})
+                </h3>
+                <div class="accordion-content" style="display: block;">
+                    <div id="scrollActionsContainer">
+                        ${scrollEvents ? this.generateScrollEventsHTML(scrollEvents, extractEventsFromNetworkData) : '<p>No scroll events data available.</p>'}
+                    </div>
                 </div>
             </div>
             
             <!-- All Successful Click Events Section -->
             <div class="subsection">
-                <h3>✅ All Successful Click Events (${clickEvents.filter(click => click.success === true).length})</h3>
-                <div id="successfulClicksContainer">
+                <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
+                    <span class="accordion-icon">▼</span> ✅ All Successful Click Events (${clickEvents.filter(click => click.success === true).length})
+                </h3>
+                <div class="accordion-content" style="display: block;">
+                    <div id="successfulClicksContainer">
                     ${clickEvents
                         .filter(click => click.success === true)
                         .sort((a, b) => a.timestamp - b.timestamp)
@@ -1406,23 +1421,36 @@ class ReportGenerator {
                                 </div>
                             `;
                         }).join('')}
+                    </div>
                 </div>
             </div>
 
 
                     ${formTestResults && formTestResults.summary && (formTestResults.summary.totalFieldTests > 0 || formTestResults.summary.totalSubmissionTests > 0) ? `
             <div class="section">
-                <h2>📝 Form Testing Results</h2>
-                ${this.generateFormTestingHTML(formTestResults)}
+                <h2 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
+                    <span class="accordion-icon">▼</span> 📝 Form Testing Results
+                </h2>
+                <div class="accordion-content" style="display: block;">
+                    ${this.generateFormTestingHTML(formTestResults)}
+                </div>
             </div>
             ` : ''}
 
-            ${this.generateEventsSectionHTML(networkEvents, extractEventsFromNetworkData, filterEventsByType, 'unmatched', 'Unmatched Network Events', '❓')}
+            ${this.generateEventsSectionHTML(networkEvents, clickEvents, extractEventsFromNetworkData, 'unmatched', 'Unmatched Network Events', '❓')}
             
             <!-- Unmatched Click Events Section -->
             <div class="subsection">
                 <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
-                    <span class="accordion-icon">▶</span> ❌ Failed Click Events
+                    <span class="accordion-icon">▶</span> ❌ Failed Click Events (${clickEvents.filter(click => click.success === false).filter(failedClick => {
+                        const hasIdenticalSuccessful = clickEvents.some(successfulClick => 
+                            successfulClick.success === true &&
+                            successfulClick.element.selector === failedClick.element.selector &&
+                            successfulClick.element.textContent === failedClick.element.textContent &&
+                            successfulClick.element.parentSelector === failedClick.element.parentSelector
+                        );
+                        return !hasIdenticalSuccessful;
+                    }).length})
                 </h3>
                 <div class="accordion-content" style="display: none;">
                     <div id="unmatchedClicksContainer">

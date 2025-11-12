@@ -42,6 +42,7 @@ const ScrollTester = require('./testers/scroll-tester');
 const FormTester = require('./testers/form-tester');
 const CONFIG = require('./config/main');
 const FORM_CONFIGS = require('./config/custom-forms');
+const { log } = require('./utils/logger');
 
 
 class GTMTracker {
@@ -114,11 +115,6 @@ class GTMTracker {
     };
   }
 
-  createFilterEventsByType() {
-    return (events, type) => {
-      return EventClassifier.filterEventsByType(events, type, this.clickEvents);
-    };
-  }
 
   async init() {
     console.log('Browser launched');
@@ -257,7 +253,7 @@ class GTMTracker {
    */
   async runFormTesting() {
     if (!this.runFormTests) {
-      this.log('Form testing is disabled');
+      log('Form testing is disabled');
       // Initialize empty results for reporting
       this.formTestResults = {
         fieldTests: [],
@@ -272,8 +268,8 @@ class GTMTracker {
     }
 
     if (!this.formConfig) {
-      this.log('⏭️  Form testing skipped - no form configuration available');
-      this.log('💡 Add form configs to custom-config.js to enable form testing');
+      log('⏭️  Form testing skipped - no form configuration available');
+      log('💡 Add form configs to custom-config.js to enable form testing');
       // Initialize empty results for reporting
       this.formTestResults = {
         fieldTests: [],
@@ -287,7 +283,7 @@ class GTMTracker {
       return;
     }
 
-    this.log('🧪 Starting form testing scenarios...');
+    log('🧪 Starting form testing scenarios...');
     
     try {
       // Try to match form config by page URL first
@@ -296,9 +292,9 @@ class GTMTracker {
       
       if (pageMatchedConfig) {
         this.formConfig = pageMatchedConfig;
-        this.log(`✅ Using page-matched form config for URL: ${currentUrl}`);
+        log(`✅ Using page-matched form config for URL: ${currentUrl}`);
       } else if (this.formConfig) {
-        this.log(`⚠️  No page match found, using provided/default config`);
+        log(`⚠️  No page match found, using provided/default config`);
       }
       
       // Create a separate network events array for form testing to avoid mixing with click events
@@ -306,17 +302,16 @@ class GTMTracker {
       const formNetworkEventKeys = new Set();
       
       // Store current network event count to track form-specific events
-      const networkEventsBeforeForm = this.networkEvents.length;
-      this.log(`📊 Network events before form testing: ${networkEventsBeforeForm}`);
+      log(`📊 Network events before form testing: ${this.networkEvents.length}`);
       
       // Use existing page state - no need to refresh since we already handled OneTrust/Pantheon
-      this.log('🎯 Using existing page state for form testing (no refresh needed)...');
+      log('🎯 Using existing page state for form testing (no refresh needed)...');
       
       // Check if the form exists on the page
       const formExists = await this.page.$(this.formConfig.formSelector);
       if (!formExists) {
-        this.log(`⏭️  Form testing skipped - form not found on page (selector: ${this.formConfig.formSelector})`);
-        this.log(`💡 Current URL: ${currentUrl}`);
+        log(`⏭️  Form testing skipped - form not found on page (selector: ${this.formConfig.formSelector})`);
+        log(`💡 Current URL: ${currentUrl}`);
         // Initialize empty results for reporting
         this.formTestResults = {
           fieldTests: [],
@@ -330,7 +325,7 @@ class GTMTracker {
         return;
       }
       
-      this.log(`✅ Form found on page: ${this.formConfig.formSelector}`);
+      log(`✅ Form found on page: ${this.formConfig.formSelector}`);
       
       // Set up form-specific network event tracking
       const formNetworkHandler = (request) => {
@@ -388,9 +383,8 @@ class GTMTracker {
       // Store results for reporting
       this.formTestResults = formTester.getResults();
       
-      const formNetworkEventsCount = formNetworkEvents.length;
-      this.log(`✅ Form testing completed. Form-specific network events: ${formNetworkEventsCount}`);
-      this.log(`📊 Results: ${JSON.stringify(this.formTestResults.summary)}`);
+      log(`✅ Form testing completed. Form-specific network events: ${formNetworkEvents.length}`);
+      log(`📊 Results: ${JSON.stringify(this.formTestResults.summary)}`);
       
       // Restore original network event listener for any remaining operations
       this.page.removeAllListeners('request');
@@ -422,19 +416,11 @@ class GTMTracker {
       });
       
     } catch (error) {
-      this.log(`❌ Error during form testing: ${error.message}`, 'error');
+      log(`❌ Error during form testing: ${error.message}`, 'error');
       // Don't throw - continue with other tests
     }
   }
 
-  /**
-   * Helper method for logging with consistent format
-   */
-  log(message, type = 'info') {
-    const timestamp = new Date().toLocaleTimeString();
-    const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
-    console.log(`${prefix} [${timestamp}] ${message}`);
-  }
 
   async run() {
     const startTime = Date.now();
@@ -626,7 +612,6 @@ class GTMTracker {
         this.clickEvents,
         this.scrollEvents,
         this.createExtractEventsFromNetworkData(),
-        this.createFilterEventsByType(),
         this.formTestResults,
         {
           startTime,
@@ -653,7 +638,6 @@ class GTMTracker {
           this.clickEvents,
           this.scrollEvents,
           this.createExtractEventsFromNetworkData(),
-          this.createFilterEventsByType(),
           this.formTestResults,
           {
             startTime,

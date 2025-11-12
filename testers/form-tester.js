@@ -15,6 +15,7 @@
 
 const CONFIG = require('../config/main');
 const NetworkHandler = require('../utils/network-handler');
+const { log } = require('../utils/logger');
 
 class FormTester {
   constructor(page, networkEvents, formConfig, extractEventsFromNetworkDataFn) {
@@ -25,15 +26,7 @@ class FormTester {
     this.testResults = [];
     this.fieldTestResults = [];
   }
-
-  /**
-   * Log test events with timestamps
-   */
-  log(message, type = 'info') {
-    const timestamp = new Date().toLocaleTimeString();
-    const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
-    console.log(`${prefix} [${timestamp}] ${message}`);
-  }
+  
 
 
   /**
@@ -42,7 +35,7 @@ class FormTester {
   async fillField(fieldName, fieldConfig, value, shouldBlur = true) {
     try {
       const actionStartTime = Date.now();
-      this.log(`🎯 Starting field action for "${fieldName}" at ${new Date(actionStartTime).toLocaleTimeString()}`);
+      log(`🎯 Starting field action for "${fieldName}" at ${new Date(actionStartTime).toLocaleTimeString()}`);
       
       // Focus the field first for all input types
       await this.page.focus(fieldConfig.selector);
@@ -88,7 +81,7 @@ class FormTester {
       
       // Blur the field if requested
       if (shouldBlur) {
-        this.log(`🔄 Blurring field "${fieldName}"`);
+        log(`🔄 Blurring field "${fieldName}"`);
         // Blur by clicking on the body or pressing Tab to unfocus
         try {
           await this.page.keyboard.press('Tab'); // This will blur the current field
@@ -100,19 +93,19 @@ class FormTester {
       }
       
       // Wait 8 seconds for GA4 events to fire
-      this.log(`⏳ Waiting 8 seconds for GA4 events after "${fieldName}" interaction...`);
+      log(`⏳ Waiting 8 seconds for GA4 events after "${fieldName}" interaction...`);
       await this.page.waitForTimeout(CONFIG.FORM.eventDelay);
       
       const actionEndTime = Date.now();
-      this.log(`🏁 Field action for "${fieldName}" completed at ${new Date(actionEndTime).toLocaleTimeString()}`);
+      log(`🏁 Field action for "${fieldName}" completed at ${new Date(actionEndTime).toLocaleTimeString()}`);
       
       // Find events that occurred during this action window (action start to action end + buffer)
       const matchedEvents = this.networkEvents.filter(event => 
         event.timestamp >= actionStartTime && event.timestamp <= actionEndTime + 1000 // 1s buffer
       );
       
-      this.log(`Filled field "${fieldName}" with value: ${JSON.stringify(value)}`);
-      this.log(`   Captured ${matchedEvents.length} events for this field action`);
+      log(`Filled field "${fieldName}" with value: ${JSON.stringify(value)}`);
+      log(`   Captured ${matchedEvents.length} events for this field action`);
       
       return {
         success: true,
@@ -122,7 +115,7 @@ class FormTester {
       };
       
     } catch (error) {
-      this.log(`Error filling field "${fieldName}": ${error.message}`, 'error');
+      log(`Error filling field "${fieldName}": ${error.message}`, 'error');
       return {
         success: false,
         field: fieldName,
@@ -157,17 +150,17 @@ class FormTester {
    */
   async testIndividualFields() {
     if (!CONFIG.FORM_TEST_SCENARIOS.individualFields) {
-      this.log('Individual field testing is disabled');
+      log('Individual field testing is disabled');
       return;
     }
     
     if (!this.config.fields || Object.keys(this.config.fields).length === 0) {
-      this.log('⏭️  Individual field testing skipped - no fields configured');
+      log('⏭️  Individual field testing skipped - no fields configured');
       return;
     }
     
     const totalFields = Object.keys(this.config.fields).length;
-    this.log(`📝 Starting individual field testing... Found ${totalFields} form fields configured`);
+    log(`📝 Starting individual field testing... Found ${totalFields} form fields configured`);
     
     let fieldsProcessed = 0;
     let fieldsSkipped = 0;
@@ -182,13 +175,13 @@ class FormTester {
         const isVisible = await this.isConditionalFieldVisible(fieldConfig);
         if (!isVisible) {
           fieldsSkipped++;
-          this.log(`⏭️  Skipping conditional field "${fieldName}" - not currently visible (${fieldsProcessed}/${totalFields})`);
+          log(`⏭️  Skipping conditional field "${fieldName}" - not currently visible (${fieldsProcessed}/${totalFields})`);
           continue;
         }
       }
       
       fieldsTested++;
-      this.log(`🧪 Testing field "${fieldName}" (${fieldsTested}/${totalFields - fieldsSkipped})`);
+      log(`🧪 Testing field "${fieldName}" (${fieldsTested}/${totalFields - fieldsSkipped})`);
       
       // Test with valid value
       const validResult = await this.fillField(fieldName, fieldConfig, fieldConfig.testValues.valid);
@@ -198,7 +191,7 @@ class FormTester {
       const errorCheck = await this.checkFieldError(fieldName);
       if (errorCheck.hasError) {
         fieldsWithErrors++;
-        this.log(`⚠️  Field "${fieldName}" shows error: ${errorCheck.errorText}`);
+        log(`⚠️  Field "${fieldName}" shows error: ${errorCheck.errorText}`);
       }
       
       this.fieldTestResults.push({
@@ -211,12 +204,12 @@ class FormTester {
 
     }
     
-    this.log(`✅ Individual field testing completed:`);
-    this.log(`   📊 Total fields configured: ${totalFields}`);
-    this.log(`   ⏭️  Fields skipped (conditional): ${fieldsSkipped}`);
-    this.log(`   🧪 Fields tested: ${fieldsTested}`);
-    this.log(`   ⚠️  Fields with errors: ${fieldsWithErrors}`);
-    this.log(`   📝 Total interactions recorded: ${this.fieldTestResults.length}`);
+    log(`✅ Individual field testing completed:`);
+    log(`   📊 Total fields configured: ${totalFields}`);
+    log(`   ⏭️  Fields skipped (conditional): ${fieldsSkipped}`);
+    log(`   🧪 Fields tested: ${fieldsTested}`);
+    log(`   ⚠️  Fields with errors: ${fieldsWithErrors}`);
+    log(`   📝 Total interactions recorded: ${this.fieldTestResults.length}`);
   }
 
   /**
@@ -240,7 +233,7 @@ class FormTester {
         return checkedBox !== null;
       }
     } catch (error) {
-      this.log(`Error checking conditional field visibility: ${error.message}`, 'error');
+      log(`Error checking conditional field visibility: ${error.message}`, 'error');
     }
     
     return false;
@@ -251,16 +244,16 @@ class FormTester {
    */
   async testValidSubmission() {
     if (!CONFIG.FORM_TEST_SCENARIOS.validSubmission) {
-      this.log('Valid submission testing is disabled');
+      log('Valid submission testing is disabled');
       return;
     }
     
-    this.log('🚀 Starting valid form submission test...');
+    log('🚀 Starting valid form submission test...');
     
     // Fill fields if configured
     if (this.config.fields && Object.keys(this.config.fields).length > 0) {
       const fieldsToFill = Object.entries(this.config.fields).filter(([_, config]) => config.testValues?.valid !== undefined);
-      this.log(`📝 Filling ${fieldsToFill.length} fields with valid data...`);
+      log(`📝 Filling ${fieldsToFill.length} fields with valid data...`);
       
       // Fill all fields with valid data (fast, no delays)
       let fieldsFilled = 0;
@@ -273,16 +266,16 @@ class FormTester {
         
         await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.valid);
         fieldsFilled++;
-        this.log(`   ✅ Filled field "${fieldName}" (${fieldsFilled}/${fieldsToFill.length})`);
+        log(`   ✅ Filled field "${fieldName}" (${fieldsFilled}/${fieldsToFill.length})`);
       }
     } else {
-      this.log('ℹ️  No fields configured - submitting form without pre-filling');
+      log('ℹ️  No fields configured - submitting form without pre-filling');
     }
     
     await this.page.waitForTimeout(CONFIG.FORM.submitDelay);
 
     // Submit the form immediately and capture the submit timestamp
-    this.log('🚀 Submitting form with valid data...');
+    log('🚀 Submitting form with valid data...');
     console.log("submit button selector", this.config.submitButtonSelector);
     
     // Capture timestamp RIGHT BEFORE clicking submit
@@ -290,7 +283,7 @@ class FormTester {
     await this.page.click(this.config.submitButtonSelector);
     
     // Wait for network events immediately after submission (during the 20s wait period)
-    this.log('⏳ Waiting for GA4 events after form submission...');
+    log('⏳ Waiting for GA4 events after form submission...');
     const networkEvents = await NetworkHandler.waitForFormNetworkEvents({
       page: this.page,
       startTime: submitTime,
@@ -303,8 +296,8 @@ class FormTester {
       }
     });
     
-    this.log('✅ Form submitted successfully');
-    this.log(`📡 Captured ${networkEvents.length} events for valid submission`);
+    log('✅ Form submitted successfully');
+    log(`📡 Captured ${networkEvents.length} events for valid submission`);
     
     this.testResults.push({
       testType: 'valid_submission',
@@ -313,7 +306,7 @@ class FormTester {
       timestamp: submitTime
     });
     
-    this.log(`✅ Valid submission test completed`);
+    log(`✅ Valid submission test completed`);
   }
 
   /**
@@ -321,25 +314,25 @@ class FormTester {
    */
   async testEmptySubmission() {
     if (!CONFIG.FORM_TEST_SCENARIOS.emptySubmission) {
-      this.log('Empty submission testing is disabled');
+      log('Empty submission testing is disabled');
       return;
     }
     
-    this.log('🧪 Starting empty form submission test...');
+    log('🧪 Starting empty form submission test...');
     
     // Form is already fresh/empty from page refresh, no need to clear
-    this.log('📝 Form is already empty (fresh page)');
+    log('📝 Form is already empty (fresh page)');
     
     // Submit empty form immediately and capture the submit timestamp
-    this.log('🚀 Submitting empty form to trigger validation errors...');
+    log('🚀 Submitting empty form to trigger validation errors...');
     
     // Capture timestamp RIGHT BEFORE clicking submit
     const submitTime = Date.now();
     await this.page.click(this.config.submitButtonSelector);
-    this.log('✅ Empty form submitted');
+    log('✅ Empty form submitted');
     
     // Wait for network events (only those AFTER submit)
-    this.log('⏳ Waiting for GA4 events after empty form submission...');
+    log('⏳ Waiting for GA4 events after empty form submission...');
     const networkEvents = await NetworkHandler.waitForFormNetworkEvents({
       page: this.page,
       startTime: submitTime,
@@ -352,7 +345,7 @@ class FormTester {
       }
     });
     
-    this.log(`📡 Captured ${networkEvents.length} events for empty submission`);
+    log(`📡 Captured ${networkEvents.length} events for empty submission`);
     
     this.testResults.push({
       testType: 'empty_submission',
@@ -361,7 +354,7 @@ class FormTester {
       timestamp: submitTime
     });
     
-    this.log(`✅ Empty submission test completed`);
+    log(`✅ Empty submission test completed`);
   }
 
   /**
@@ -369,47 +362,47 @@ class FormTester {
    */
   async testInvalidSubmission() {
     if (!CONFIG.FORM_TEST_SCENARIOS.invalidSubmission) {
-      this.log('Invalid submission testing is disabled');
+      log('Invalid submission testing is disabled');
       return;
     }
     
-    this.log('🧪 Starting invalid data submission test...');
+    log('🧪 Starting invalid data submission test...');
     
     // Fill form with invalid data if configured
     if (this.config.fields && Object.keys(this.config.fields).length > 0) {
       const invalidFields = Object.entries(this.config.fields).filter(([_, config]) => config.testValues?.invalid !== undefined);
       
       if (invalidFields.length > 0) {
-        this.log(`📝 Filling ${invalidFields.length} fields with invalid data...`);
+        log(`📝 Filling ${invalidFields.length} fields with invalid data...`);
         
         let fieldsFilled = 0;
         for (const [fieldName, fieldConfig] of invalidFields) {
           await this.fastFillField(fieldName, fieldConfig, fieldConfig.testValues.invalid);
           fieldsFilled++;
-          this.log(`   ❌ Filled field "${fieldName}" with invalid data (${fieldsFilled}/${invalidFields.length})`);
+          log(`   ❌ Filled field "${fieldName}" with invalid data (${fieldsFilled}/${invalidFields.length})`);
         }
       } else {
-        this.log('⏭️  No fields with invalid test values configured - skipping invalid submission test');
+        log('⏭️  No fields with invalid test values configured - skipping invalid submission test');
         return;
       }
     } else {
-      this.log('⏭️  No fields configured - skipping invalid submission test');
+      log('⏭️  No fields configured - skipping invalid submission test');
       return;
     }
 
     await this.page.waitForTimeout(CONFIG.FORM.submitDelay);
     
     // Submit the form immediately and capture the submit timestamp
-    this.log('🚀 Submitting form with invalid data...');
+    log('🚀 Submitting form with invalid data...');
     
     // Capture timestamp RIGHT BEFORE clicking submit
     const submitTime = Date.now();
     await this.page.click(this.config.submitButtonSelector);
     
-    this.log('✅ Form submitted with invalid data');
+    log('✅ Form submitted with invalid data');
     
     // Wait for network events (only those AFTER submit)
-    this.log('⏳ Waiting for GA4 events after invalid form submission...');
+    log('⏳ Waiting for GA4 events after invalid form submission...');
     const networkEvents = await NetworkHandler.waitForFormNetworkEvents({
       page: this.page,
       startTime: submitTime,
@@ -422,7 +415,7 @@ class FormTester {
       }
     });
     
-    this.log(`📡 Captured ${networkEvents.length} events for invalid submission`);
+    log(`📡 Captured ${networkEvents.length} events for invalid submission`);
     
     this.testResults.push({
       testType: 'invalid_submission',
@@ -431,7 +424,7 @@ class FormTester {
       timestamp: submitTime
     });
     
-    this.log(`✅ Invalid submission test completed`);
+    log(`✅ Invalid submission test completed`);
   }
 
   /**
@@ -470,7 +463,7 @@ class FormTester {
         }
       } catch (error) {
         // Continue with other fields if one fails
-        this.log(`Warning: Could not clear field "${fieldName}": ${error.message}`);
+        log(`Warning: Could not clear field "${fieldName}": ${error.message}`);
       }
     }
   }
@@ -482,7 +475,7 @@ class FormTester {
    * Refresh page and prepare for new phase
    */
   async refreshForNewPhase(phaseName) {
-    this.log(`🔄 Refreshing page for ${phaseName}...`);
+    log(`🔄 Refreshing page for ${phaseName}...`);
     await this.page.reload({ waitUntil: 'domcontentloaded' });
     await this.page.waitForTimeout(2000); // Wait for page to stabilize
     
@@ -501,7 +494,7 @@ class FormTester {
       // Check if field exists first (without timeout)
       const fieldExists = await this.page.$(fieldConfig.selector);
       if (!fieldExists) {
-        this.log(`⏭️  Field "${fieldName}" not found, skipping...`);
+        log(`⏭️  Field "${fieldName}" not found, skipping...`);
         return { success: false, error: 'Field not found', skipped: true };
       }
       
@@ -543,7 +536,7 @@ class FormTester {
       return { success: true };
       
     } catch (error) {
-      this.log(`❌ Error fast-filling field "${fieldName}": ${error.message}`, 'error');
+      log(`❌ Error fast-filling field "${fieldName}": ${error.message}`, 'error');
       return { success: false, error: error.message };
     }
   }
@@ -578,41 +571,41 @@ class FormTester {
       }
     });
     
-    this.log(`🔍 DEBUG: Captured ${eventsInWindow.length} total events during ${testType} (${new Date(startTime).toLocaleTimeString()} - ${new Date(actualEndTime).toLocaleTimeString()})`);
+    log(`🔍 DEBUG: Captured ${eventsInWindow.length} total events during ${testType} (${new Date(startTime).toLocaleTimeString()} - ${new Date(actualEndTime).toLocaleTimeString()})`);
   }
 
   async runAllTests() {
-    this.log('🚀 Starting comprehensive form testing...');
+    log('🚀 Starting comprehensive form testing...');
     const overallStartTime = Date.now();
     
     try {
       // Test 1: Individual field testing (use current page state)
-      this.log('\n📝 === PHASE 1: INDIVIDUAL FIELD TESTING ===');
+      log('\n📝 === PHASE 1: INDIVIDUAL FIELD TESTING ===');
       await this.testIndividualFields();
       
       // Test 2: Valid submission (fresh page)
       await this.refreshForNewPhase('PHASE 2: VALID FORM SUBMISSION');
-      this.log('\n🚀 === PHASE 2: VALID FORM SUBMISSION ===');
+      log('\n🚀 === PHASE 2: VALID FORM SUBMISSION ===');
       await this.testValidSubmission();
       
       // Test 3: Empty submission (fresh page)
       await this.refreshForNewPhase('PHASE 3: EMPTY FORM SUBMISSION');
-      this.log('\n🧪 === PHASE 3: EMPTY FORM SUBMISSION ===');
+      log('\n🧪 === PHASE 3: EMPTY FORM SUBMISSION ===');
       await this.testEmptySubmission();
       
       // Test 4: Invalid submission (fresh page)
       await this.refreshForNewPhase('PHASE 4: INVALID DATA SUBMISSION');
-      this.log('\n🧪 === PHASE 4: INVALID DATA SUBMISSION ===');
+      log('\n🧪 === PHASE 4: INVALID DATA SUBMISSION ===');
       await this.testInvalidSubmission();
       
       const totalTime = Date.now() - overallStartTime;
-      this.log(`\n🎉 All form tests completed in ${totalTime}ms`);
+      log(`\n🎉 All form tests completed in ${totalTime}ms`);
       
       // Generate summary
       this.generateTestSummary();
       
     } catch (error) {
-      this.log(`❌ Error during form testing: ${error.message}`, 'error');
+      log(`❌ Error during form testing: ${error.message}`, 'error');
       throw error;
     }
   }
