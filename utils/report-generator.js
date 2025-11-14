@@ -93,9 +93,22 @@ class ReportGenerator {
       </div>
     ` : '';
 
+    // Add dropdown indicator
+    const dropdownBadge = click.isDropdownItem ? `
+      <div class="click-info-section">
+        <span class="click-info-label"></span>
+        <span class="click-info-value">
+          <span style="background: #fff3e0; color: #f57c00; padding: 4px 12px; border-radius: 12px; font-size: 0.85em; font-weight: 600; border: 1px solid #ffb74d;">
+            🔽 Dropdown Item
+          </span>
+        </span>
+      </div>
+    ` : '';
+
     return `
       <div class="click-basic-info">
         ${showOrder ? `<div class="click-info-section"><span class="click-info-label">Click Order:</span><span class="click-info-value">${orderIndex + 1}</span></div>` : ''}
+        ${dropdownBadge}
         ${screenshotHTML}
         <div class="click-info-section">
           <span class="click-info-label">Element:</span>
@@ -415,15 +428,11 @@ class ReportGenerator {
         });
 
         const hasMatchingEvent = scroll.matchedNetworkEvents.length > 0;
-        const statusBadge = hasMatchingEvent 
-          ? `<span class="event-type" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">TRIGGERED GA4</span>`
-          : `<span class="event-type" style="background: #ffc107; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">NO GA4</span>`;
-        
+
         return `
           <div class="event-item" style="background: ${hasMatchingEvent ? '#f1f8e9' : '#fff3cd'}; border-left: 4px solid ${hasMatchingEvent ? '#4caf50' : '#ffc107'};">
             <div class="event-header">
               <span style="background: #2196f3; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 8px;">#${idx + 1}</span>
-              ${statusBadge}
               <span style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">scroll</span>
               <span class="event-time">${new Date(scroll.timestamp).toLocaleTimeString()}</span>
             </div>
@@ -687,7 +696,8 @@ class ReportGenerator {
                     eventAction: event.eventAction || '',
                     eventLabel: event.eventLabel || '',
                     timeAfterTrigger: networkEvent.timestamp - click.timestamp,
-                    networkUrl: networkEvent.url
+                    networkUrl: networkEvent.url,
+                    isDropdownItem: click.isDropdownItem || false
                   });
                 });
               });
@@ -710,7 +720,8 @@ class ReportGenerator {
                 eventAction: '',
                 eventLabel: '',
                 timeAfterTrigger: '',
-                networkUrl: ''
+                networkUrl: '',
+                isDropdownItem: click.isDropdownItem || false
               });
             }
           } else {
@@ -732,7 +743,8 @@ class ReportGenerator {
               eventAction: '',
               eventLabel: '',
               timeAfterTrigger: '',
-              networkUrl: ''
+              networkUrl: '',
+              isDropdownItem: click.isDropdownItem || false
             });
           }
         });
@@ -795,7 +807,7 @@ class ReportGenerator {
                 elementHref: '',
                 elementSelector: formTestResults.formConfig?.formSelector || '',
                 scrollDepth: '',
-                formCode: formTestResults.formConfig?.tracking?.formCode || '',
+                formCode: formTestResults.formConfigName || '',
                 triggerTime: new Date(formTest.timestamp).toLocaleTimeString(),
                 ardEventName: event.eventName || '',  // ARD-friendly name
                 eventName: event.eventName || '',
@@ -915,7 +927,8 @@ class ReportGenerator {
       'Event Action',
       'Event Label',
       'Timestamp',
-      'Network URL'
+      'Network URL',
+      'Is Dropdown'
     ]);
     
     // Add all events to CSV
@@ -928,7 +941,8 @@ class ReportGenerator {
         cleanValue(event.eventAction),
         cleanValue(event.eventLabel),
         event.timestamp || '',  // Raw timestamp
-        cleanValue(event.networkUrl)
+        cleanValue(event.networkUrl),
+        event.isDropdownItem ? 'Yes' : 'No'
       ]);
     });
     
@@ -983,10 +997,17 @@ class ReportGenerator {
     console.log(`Non-form requests: ${requests.length}`);
     console.log(`All requests (including form): ${allRequests.length}`);
     
-    // Generate filename
-    const siteUrl = new URL(options.url).hostname.replace(/\./g, '-');
+    // Generate filename with page path
+    const urlObj = new URL(options.url);
+    const hostname = urlObj.hostname.replace(/\./g, '-');
+    const pathname = urlObj.pathname
+      .replace(/^\/|\/$/g, '') // Remove leading/trailing slashes
+      .replace(/\//g, '-') // Replace slashes with dashes
+      .replace(/[^a-zA-Z0-9-]/g, '_') // Replace special chars with underscores
+      .substring(0, 50) // Limit length
+      || 'home'; // Default to 'home' if root path
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const reportFilename = `network-events-${siteUrl}-${timestamp}`;
+    const reportFilename = `network-events-${hostname}-${pathname}-${timestamp}`;
     
     // Create test-results folder
     const testResultsDir = 'test-results';
@@ -1398,16 +1419,10 @@ class ReportGenerator {
                                 });
                             }
                             
-                            const statusBadge = hasMatchingEvent 
-                                ? `<span class="event-type" style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">TRIGGERED GA4</span>`
-                                : `<span class="event-type" style="background: #ffc107; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">NO GA4</span>`;
-                            
-                            
                             return `
                                 <div class="event-item" style="background: ${hasMatchingEvent ? '#f1f8e9' : '#fff3cd'}; border-left: 4px solid ${hasMatchingEvent ? '#4caf50' : '#ffc107'};">
                                     <div class="event-header">
                                         <span style="background: #2196f3; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 8px;">#${idx + 1}</span>
-                                        ${statusBadge}
                                         <span style="background: #4caf50; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8em;">click</span>
                                         ${this.generateElementInfoHTML(click.element)}
                                         <span class="event-time">${new Date(click.timestamp).toLocaleTimeString()}</span>
@@ -1443,6 +1458,11 @@ class ReportGenerator {
             <div class="subsection">
                 <h3 onclick="toggleAccordion(this)" style="cursor: pointer; user-select: none;">
                     <span class="accordion-icon">▶</span> ❌ Failed Click Events (${clickEvents.filter(click => click.success === false).filter(failedClick => {
+                        // Skip unknown elements
+                        if (failedClick.element.selector === 'unknown' || !failedClick.element.selector) {
+                            return false;
+                        }
+                        
                         const hasIdenticalSuccessful = clickEvents.some(successfulClick => 
                             successfulClick.success === true &&
                             successfulClick.element.selector === failedClick.element.selector &&
@@ -1457,6 +1477,11 @@ class ReportGenerator {
                     ${clickEvents
                         .filter(click => click.success === false)
                         .filter(failedClick => {
+                            // Skip unknown elements - they provide no useful information
+                            if (failedClick.element.selector === 'unknown' || !failedClick.element.selector) {
+                                return false;
+                            }
+                            
                             // Check if there's an identical successful click for this element
                             const hasIdenticalSuccessful = clickEvents.some(successfulClick => 
                                 successfulClick.success === true &&

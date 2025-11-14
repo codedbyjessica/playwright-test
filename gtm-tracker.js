@@ -41,8 +41,10 @@ const ClickTester = require('./testers/click-tester');
 const ScrollTester = require('./testers/scroll-tester');
 const FormTester = require('./testers/form-tester');
 const CONFIG = require('./config/main');
-const FORM_CONFIGS = require('./config/custom-forms');
 const { log } = require('./utils/logger');
+const CustomActionsExecutor = require('./utils/custom-actions');
+const DomainConfigLoader = require('./utils/domain-config-loader');
+const ConsentHandler = require('./utils/consent-handler');
 
 
 class GTMTracker {
@@ -64,35 +66,28 @@ class GTMTracker {
     this.page = null;
     this.reportGenerator = new ReportGenerator();
     
+    // Load form configs dynamically based on domain
+    this.FORM_CONFIGS = DomainConfigLoader.loadFormConfigsForDomain(this.options.url);
+    
+    // Load custom functions for the domain (e.g., preFormActions)
+    this.customFunctions = DomainConfigLoader.loadCustomFunctionsForDomain(this.options.url);
+    
     // Form testing configuration - controlled by CONFIG.RUN_GA_CATEGORIES.forms
-    this.formConfig = options.formConfig || this.detectDefaultFormConfig();
+    const defaultFormConfig = DomainConfigLoader.detectDefaultFormConfig(this.FORM_CONFIGS);
+    
+    if (options.formConfig) {
+      // If formConfig is provided directly, find its name from FORM_CONFIGS
+      this.formConfig = options.formConfig;
+      this.formConfigName = Object.keys(this.FORM_CONFIGS || {}).find(
+        key => this.FORM_CONFIGS[key] === options.formConfig
+      ) || null;
+    } else {
+      // Use default config
+      this.formConfig = defaultFormConfig ? defaultFormConfig.config : null;
+      this.formConfigName = defaultFormConfig ? defaultFormConfig.name : null;
+    }
+    
     this.runFormTests = CONFIG.RUN_GA_CATEGORIES.forms;
-  }
-
-  /**
-   * Detect form configuration by matching page URL
-   */
-  detectFormConfigByPage(pageUrl) {
-    for (const [configName, config] of Object.entries(FORM_CONFIGS)) {
-      if (config.page && pageUrl.includes(config.page)) {
-        console.log(`📋 Matched form config "${configName}" for page: ${config.page}`);
-        return config;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Detect default form configuration (use first available config if no page match)
-   */
-  detectDefaultFormConfig() {
-    const availableConfigs = Object.keys(FORM_CONFIGS);
-    if (availableConfigs.length > 0) {
-      const defaultConfig = availableConfigs[0];
-      console.log(`📋 Using fallback form config: ${defaultConfig}`);
-      return FORM_CONFIGS[defaultConfig];
-    }
-    return null;
   }
 
   // Helper methods for creating functions that need this.clickEvents
@@ -117,62 +112,29 @@ class GTMTracker {
 
 
   async init() {
-    console.log('Browser launched');
     this.browser = await chromium.launch({ 
-      headless: this.options.headless,
-      timeout: CONFIG.GLOBAL.browserTimeout, // Timeout for browser launch
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--no-first-run',
-        '--disable-default-apps',
-        '--disable-extensions',
-        '--disable-plugins',
-        '--disable-images',
-        '--disable-javascript-harmony-shipping',
-        '--disable-background-networking',
-        '--disable-sync',
-        '--metrics-recording-only',
-        '--no-default-browser-check',
-        '--no-experiments',
-        '--no-pings',
-        '--no-service-autorun'
-      ]
+      headless: this.options.headless
     });
     
-    console.log('Creating browser context...');
-    // Create an incognito context with a realistic user agent
     const context = await this.browser.newContext({
       viewport: CONFIG.GLOBAL.viewport,
-      userAgent: CONFIG.GLOBAL.userAgent
+      userAgent: CONFIG.GLOBAL.userAgent,
+      extraHTTPHeaders: CONFIG.GLOBAL.extraHTTPHeaders
     });
     
-    console.log('Creating new page...');
     this.page = await context.newPage();
-
-    // Clear cookies before navigation
     await context.clearCookies();
 
     // Set up network event interception
     this.page.on('request', request => {
       const url = request.url();
-      // Only record GA4 collect requests
       if (CONFIG.GLOBAL.ga4Urls.some(ga4Url => url.includes(ga4Url))) {
         const timestamp = new Date().getTime();
-        
-        // Extract parameters from both POST data and URL query parameters
         const postParams = EventParser.extractEventParams(request.postData());
         const urlParams = EventParser.extractEventParamsFromData(url.split('?')[1] || '', 'URL');
-        
-        // Merge parameters, with URL parameters taking precedence for event name
         const extractedParams = { ...postParams, ...urlParams };
         
-        console.log(`📡 Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
-        console.log(`📡 Event name extracted: ${extractedParams.eventName || 'unknown'}`);
+        console.log(`📡 ${extractedParams.eventName || 'unknown'} - ${new Date(timestamp).toLocaleTimeString()}`);
         
         this.networkEvents.push({
           type: 'request',
@@ -183,70 +145,11 @@ class GTMTracker {
           postData: request.postData(),
           ...extractedParams
         });
-          console.log(`🔍 ARRAY DEBUG: Network events array now has ${this.networkEvents.length} events`);
       }
     });
-
   }
 
-  async dismissPantheon() {
-    const dismissBtn = await this.page.$(".pds-button");
-    if (dismissBtn) {
-      await dismissBtn.click();
-      console.log('✅ Clicked Pantheon dismiss button');
-      await this.page.waitForTimeout(CONFIG.NETWORK_WAIT);
-    }
-  }
 
-  async handleOneTrust() {
-    try {
-      console.log('🍪 Looking for OneTrust cookie consent...');
-      
-      const acceptBtn = await this.page.$(CONFIG.ONETRUST.acceptButtonSelector);
-      if (acceptBtn) {
-        await acceptBtn.click();
-        console.log('✅ Clicked OneTrust I Agree button');
-        await this.page.waitForTimeout(CONFIG.GLOBAL.networkWait);
-        return true;
-      }
-      
-      console.log('ℹ️  No OneTrust cookie consent banner found');
-      return false;
-    } catch (error) {
-      console.log('⚠️  Error handling cookie consent:', error.message);
-      return false;
-    }
-  }
-
-  async clickElements() {
-    const clickTester = new ClickTester(
-      this.page,
-      this.networkEvents,
-      this.matchedNetworkEventKeys,
-      this.createExtractEventsFromNetworkData()
-    );
-    
-    await clickTester.runClickTests();
-    
-    // Get results and store them
-    const results = clickTester.getResults();
-    this.clickEvents = results.clickEvents;
-  }
-
-  async scrollPage() {
-    const scrollTester = new ScrollTester(
-      this.page,
-      this.networkEvents,
-      this.matchedNetworkEventKeys,
-      this.createExtractEventsFromNetworkData()
-    );
-    
-    await scrollTester.runScrollTests();
-    
-    // Get results and store them
-    const results = scrollTester.getResults();
-    this.scrollEvents = results.scrollEvents;
-  }
 
   /**
    * Run form testing scenarios in isolation
@@ -286,13 +189,21 @@ class GTMTracker {
     log('🧪 Starting form testing scenarios...');
     
     try {
+      // Execute custom pre-form actions if they exist
+      if (this.customFunctions && this.customFunctions.preFormActions) {
+        log('🔧 Executing custom pre-form actions...');
+        await CustomActionsExecutor.execute(this.page, this.customFunctions.preFormActions);
+        log('✅ Custom pre-form actions completed');
+      }
+      
       // Try to match form config by page URL first
       const currentUrl = this.page.url();
-      const pageMatchedConfig = this.detectFormConfigByPage(currentUrl);
+      const pageMatchedConfig = DomainConfigLoader.detectFormConfigByPage(this.FORM_CONFIGS, currentUrl);
       
       if (pageMatchedConfig) {
-        this.formConfig = pageMatchedConfig;
-        log(`✅ Using page-matched form config for URL: ${currentUrl}`);
+        this.formConfig = pageMatchedConfig.config;
+        this.formConfigName = pageMatchedConfig.name;
+        log(`✅ Using page-matched form config "${this.formConfigName}" for URL: ${currentUrl}`);
       } else if (this.formConfig) {
         log(`⚠️  No page match found, using provided/default config`);
       }
@@ -340,8 +251,6 @@ class GTMTracker {
           // Merge parameters, with URL parameters taking precedence for event name
           const extractedParams = { ...postParams, ...urlParams };
           
-          console.log(`📡 [FORM] Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
-          console.log(`📡 [FORM] Event name extracted: ${extractedParams.eventName || 'unknown'}`);
           
           formNetworkEvents.push({
             type: 'request',
@@ -376,12 +285,16 @@ class GTMTracker {
         this.page, 
         formNetworkEvents, 
         this.formConfig,
-        this.createExtractEventsFromNetworkData()
+        this.createExtractEventsFromNetworkData(),
+        this.customFunctions?.afterRefreshAction || null
       );
       await formTester.runAllTests();
       
       // Store results for reporting
       this.formTestResults = formTester.getResults();
+      // Add formConfig and formConfigName to results for reporting
+      this.formTestResults.formConfig = this.formConfig;
+      this.formTestResults.formConfigName = this.formConfigName;
       
       log(`✅ Form testing completed. Form-specific network events: ${formNetworkEvents.length}`);
       log(`📊 Results: ${JSON.stringify(this.formTestResults.summary)}`);
@@ -400,8 +313,6 @@ class GTMTracker {
           // Merge parameters, with URL parameters taking precedence for event name
           const extractedParams = { ...postParams, ...urlParams };
           
-          console.log(`📡 Recording network request: ${request.url()} at ${new Date(timestamp).toLocaleTimeString()}`);
-          console.log(`📡 Event name extracted: ${extractedParams.eventName || 'unknown'}`);
           
           this.networkEvents.push({
             type: 'request',
@@ -424,185 +335,75 @@ class GTMTracker {
 
   async run() {
     const startTime = Date.now();
-    const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     try {
-      console.log(`🚀 [${executionId}] SCRIPT STARTED - PID: ${process.pid}`);
-      console.log(`🌐 [${executionId}] Opening incognito window for: ${this.options.url}`);
-      console.log(`🔧 [${executionId}] Execution mode: ${this.options.headless ? 'headless' : 'headed'}`);
-      console.log(`🔧 [${executionId}] Config delays - CLICK: ${CONFIG.CLICK.eventDelay}ms, SCROLL: ${CONFIG.SCROLL.eventDelay}ms, NETWORK_WAIT: ${CONFIG.GLOBAL.networkWait}ms`);
-      const initStart = Date.now();
-      await this.init();
-      console.log(`✅ Browser initialized in ${Date.now() - initStart}ms`);
+      console.log(`🚀 Starting GA4 tracking for: ${this.options.url}`);
       
-      // Navigate to URL
-      console.log(`Navigating to: ${this.options.url}`);
-      const navStart = Date.now();
+      await this.init();
       await this.page.goto(this.options.url, { 
         waitUntil: 'domcontentloaded',
         timeout: this.options.timeout 
       });
-      console.log(`Page loaded in ${Date.now() - navStart}ms`);
-      
-      console.log(`⏳ Waiting ${CONFIG.GLOBAL.pageLoadTimeout}ms for page to stabilize...`);
       await this.page.waitForTimeout(CONFIG.GLOBAL.pageLoadTimeout);
 
-      // Dismiss Pantheon
-      await this.dismissPantheon();
+      // Handle cookie consent banners
+      await ConsentHandler.handleAll(this.page);
+
+      if (this.customFunctions && this.customFunctions.preTestActions) {
+        log('🔧 Executing custom pre-test actions...');
+        await CustomActionsExecutor.execute(this.page, this.customFunctions.preTestActions);
+        log('✅ Custom pre-test actions completed');
+      }
       
-      // Handle OneTrust
-      await this.handleOneTrust();
-      
-      // Scroll the page
+      // Scroll testing
       if (CONFIG.RUN_GA_CATEGORIES.scroll) {
-        console.log('Starting scroll analysis');
-        await this.scrollPage();
-        // Wait longer between scroll and click to ensure all scroll events are captured
-        console.log(`⏳ Waiting ${CONFIG.CLICK.eventDelay/1000} seconds between scroll and click actions...`);
+        const scrollTester = new ScrollTester(
+          this.page,
+          this.networkEvents,
+          this.matchedNetworkEventKeys,
+          this.createExtractEventsFromNetworkData()
+        );
+        await scrollTester.runScrollTests();
+        const scrollResults = scrollTester.getResults();
+        this.scrollEvents = scrollResults.scrollEvents;
         await this.page.waitForTimeout(CONFIG.CLICK.eventDelay);
       }
 
-
+      // Click testing
       if (CONFIG.RUN_GA_CATEGORIES.click) {
-          console.log('Starting click analysis');
-          await this.clickElements();
+        const clickTester = new ClickTester(
+          this.page,
+          this.networkEvents,
+          this.matchedNetworkEventKeys,
+          this.createExtractEventsFromNetworkData(),
+          this.customFunctions?.afterRefreshAction || null
+        );
+        await clickTester.runClickTests();
+        const clickResults = clickTester.getResults();
+        this.clickEvents = clickResults.clickEvents;
       }
 
-
-      // Wait for all click-related network events to settle before form testing
-      console.log('⏳ Waiting for click events to settle before form testing...');
-      await this.page.waitForTimeout(CONFIG.GLOBAL.networkWait * 2); // Extra wait time
-      
-      console.log('\n📝 === STARTING FORM TESTING PHASE ===');
-      if (this.formConfig) {
-        console.log(`📋 Form config loaded: ${Object.keys(FORM_CONFIGS).find(key => FORM_CONFIGS[key] === this.formConfig) || 'Unknown'}`);
-      }
+      // Form testing
+      await this.page.waitForTimeout(CONFIG.GLOBAL.networkWait * 2);
       await this.runFormTesting();
       
       // Wait a bit more to capture any final network events
-      await this.page.waitForTimeout(CONFIG.NETWORK_WAIT);
+      await this.page.waitForTimeout(CONFIG.GLOBAL.pageLoadTimeout);
       
-      // Log summary statistics
-      console.log('\n📊 === COMPREHENSIVE TRACKING SUMMARY ===');
-      console.log(`🔍 SUMMARY DEBUG: Network events array has ${this.networkEvents.length} events before summary`);
-      console.log(`🔍 SUMMARY DEBUG: Event types:`, this.networkEvents.map(e => e.type));
-      
+      // Summary
+      console.log('\n📊 === SUMMARY ===');
       const successfulClicks = this.clickEvents.filter(click => click.success === true);
-      const failedClicks = this.clickEvents.filter(click => click.success === false);
       const totalNetworkEvents = this.networkEvents.filter(e => e.type === 'request').length;
       
-      console.log(`Total clicks recorded: ${this.clickEvents.length}`);
-      console.log(`Successful clicks: ${successfulClicks.length}`);
-      console.log(`Failed clicks: ${failedClicks.length}`);
-      console.log(`Total scroll actions: ${this.scrollEvents.length}`);
-      console.log(`Total GA4 network events: ${totalNetworkEvents}`);
-      console.log(`Total network events: ${totalNetworkEvents}`);
-      console.log(`📊 Total extracted events for ARD analysis: ${this.networkEvents.length}`);
+      console.log(`Clicks: ${successfulClicks.length}/${this.clickEvents.length} successful`);
+      console.log(`Scrolls: ${this.scrollEvents.length}`);
+      console.log(`GA4 Events: ${totalNetworkEvents}`);
       
-      // Form testing summary
+      // Form summary
       if (this.formTestResults && this.formTestResults.summary) {
-        console.log(`\n📋 === FORM TESTING SUMMARY ===`);
-        console.log(`Total field tests: ${this.formTestResults.summary.totalFieldTests}`);
-        console.log(`Total submission tests: ${this.formTestResults.summary.totalSubmissionTests}`);
-        console.log(`Form testing network events: ${this.formTestResults.summary.totalNetworkEvents}`);
-        
-        // Field test breakdown
-        if (this.formTestResults.fieldTests.length > 0) {
-          const successfulFieldTests = this.formTestResults.fieldTests.filter(test => test.result.success).length;
-          const failedFieldTests = this.formTestResults.fieldTests.filter(test => !test.result.success).length;
-          const fieldTestsWithErrors = this.formTestResults.fieldTests.filter(test => test.errorState.hasError).length;
-          const fieldTestsWithGA4 = this.formTestResults.fieldTests.filter(test => test.result.networkEvents && test.result.networkEvents.length > 0).length;
-          
-          console.log(`\n📊 === FIELD TESTING BREAKDOWN ===`);
-          console.log(`Successful field interactions: ${successfulFieldTests}`);
-          console.log(`Failed field interactions: ${failedFieldTests}`);
-          console.log(`Fields that showed validation errors: ${fieldTestsWithErrors}`);
-          console.log(`Field interactions that triggered GA4: ${fieldTestsWithGA4}`);
-        }
-        
-        // Submission test breakdown
-        if (this.formTestResults.submissionTests.length > 0) {
-          console.log(`\n📊 === SUBMISSION TESTING BREAKDOWN ===`);
-          this.formTestResults.submissionTests.forEach(test => {
-            if (test.testType === 'valid_submission') {
-              console.log(`  Valid submission: ${test.success ? 'SUCCESS' : 'FAILED'}`);
-            } else if (test.testType === 'empty_submission') {
-              const errorsFound = test.errorResults ? test.errorResults.filter(e => e.found).length : 0;
-              const totalExpected = test.errorResults ? test.errorResults.length : 0;
-              console.log(`  Empty submission: ${errorsFound}/${totalExpected} expected errors shown`);
-            } else if (test.testType === 'invalid_submission') {
-              const errorsFound = test.errorResults ? test.errorResults.filter(e => e.found).length : 0;
-              const totalExpected = test.errorResults ? test.errorResults.length : 0;
-              console.log(`  Invalid submission: ${errorsFound}/${totalExpected} validation errors shown`);
-            }
-            
-            if (test.networkEvents && test.networkEvents.length > 0) {
-              console.log(`    └─ Triggered ${test.networkEvents.length} GA4 event(s)`);
-            }
-          });
-        }
+        console.log(`Forms: ${this.formTestResults.summary.totalSubmissionTests} tests, ${this.formTestResults.summary.totalNetworkEvents} events`);
       }
       
-      // Debug: Show breakdown of event types
-      const eventTypes = {};
-      this.networkEvents.forEach(event => {
-        const type = event.type || 'undefined';
-        eventTypes[type] = (eventTypes[type] || 0) + 1;
-      });
-      console.log('📊 Event types breakdown:', eventTypes);
-      
-      // Count matched clicks using the new direct matching approach
-      let matchedClicks = 0;
-      successfulClicks.forEach(click => {
-        if (click.matchedNetworkEvents && click.matchedNetworkEvents.length > 0) {
-          matchedClicks++;
-        }
-      });
-      
-      // Count matched scroll events
-      let matchedScrolls = 0;
-      let scrollTriggeredEvents = 0;
-      this.scrollEvents.forEach(scroll => {
-        if (scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0) {
-          matchedScrolls++;
-          scrollTriggeredEvents += scroll.matchedNetworkEvents.length;
-        }
-      });
-      
-      console.log(`\n📊 === CLICK EVENTS ===`);
-      console.log(`Clicks that triggered GA4 events: ${matchedClicks}`);
-      console.log(`Successful clicks with no GA4 events: ${successfulClicks.length - matchedClicks}`);
-      
-      console.log(`\n📊 === SCROLL EVENTS ===`);
-      console.log(`Scroll actions that triggered GA4 events: ${matchedScrolls}`);
-      console.log(`Total GA4 events triggered by scrolling: ${scrollTriggeredEvents}`);
-      console.log(`Scroll actions with no GA4 events: ${this.scrollEvents.length - matchedScrolls}`);
-      
-      // Show which scroll percentages triggered events
-      const scrollEventsByPercentage = {};
-      this.scrollEvents.forEach(scroll => {
-        if (scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0) {
-          if (!scrollEventsByPercentage[scroll.percentage]) {
-            scrollEventsByPercentage[scroll.percentage] = 0;
-          }
-          scrollEventsByPercentage[scroll.percentage] += scroll.matchedNetworkEvents.length;
-        }
-      });
-      
-      if (Object.keys(scrollEventsByPercentage).length > 0) {
-        console.log(`\n📊 === SCROLL PERCENTAGE BREAKDOWN ===`);
-        Object.entries(scrollEventsByPercentage)
-          .sort(([a], [b]) => parseInt(a) - parseInt(b))
-          .forEach(([percentage, count]) => {
-            console.log(`  ${percentage}% scroll: ${count} GA4 event(s)`);
-          });
-      }
-      
-      // Generate HTML report
-      console.log('Generating report');
-      console.log(`🔍 DEBUG: About to generate report with ${this.networkEvents.length} network events`);
-      console.log(`🔍 DEBUG: Network events array:`, this.networkEvents.map(e => ({ type: e.type, url: e.url?.substring(0, 50) })));
-      
-      const reportStart = Date.now();
+      // Generate reports
       const endTime = Date.now();
       const totalTime = endTime - startTime;
       
@@ -619,19 +420,16 @@ class GTMTracker {
           totalTime
         }
       );
-      console.log(`✅ Reports generated in ${Date.now() - reportStart}ms`);
       
-      console.log(`🎉 Test completed successfully in ${totalTime}ms (${(totalTime/1000).toFixed(1)}s)`);
+      console.log(`✅ Completed in ${(totalTime/1000).toFixed(1)}s`);
       
     } catch (error) {
-      console.error('❌ Error running tracker:', error);
+      console.error('❌ Error:', error.message);
       
-      // Always try to generate a report even if there's an error
+      // Generate report despite error
       try {
-        console.log('\n📋 Generating report despite error...');
         const endTime = Date.now();
         const totalTime = endTime - startTime;
-        
         await this.reportGenerator.generateHTMLReport(
           this.options,
           this.networkEvents,
@@ -639,15 +437,10 @@ class GTMTracker {
           this.scrollEvents,
           this.createExtractEventsFromNetworkData(),
           this.formTestResults,
-          {
-            startTime,
-            endTime,
-            totalTime
-          }
+          { startTime, endTime, totalTime }
         );
-        console.log('✅ Report generated successfully despite error');
       } catch (reportError) {
-        console.error('❌ Failed to generate report:', reportError);
+        console.error('❌ Report generation failed:', reportError.message);
       }
     } finally {
       if (this.browser) {
@@ -678,26 +471,16 @@ if (clickPauseArg) {
 }
 
 // Parse form config option (optional - can specify which form config to use)
+// Note: Form config loading is now domain-based and handled in GTMTracker constructor
 let formConfigName = null;
 const formConfigArg = args.find(arg => arg.startsWith('--form-config='));
 if (formConfigArg) {
   formConfigName = formConfigArg.split('=')[1];
+  console.log(`📋 Form config name specified: ${formConfigName}`);
 }
 
-// Get form configuration - use specified config or auto-detect
+// Form configuration will be automatically loaded based on domain in GTMTracker constructor
 let formConfig = null;
-if (formConfigName && FORM_CONFIGS[formConfigName]) {
-  formConfig = FORM_CONFIGS[formConfigName];
-  console.log(`📋 Using specified form config: ${formConfigName}`);
-} else if (Object.keys(FORM_CONFIGS).length > 0) {
-  // Auto-detect will happen in GTMTracker constructor based on page URL
-  const defaultConfigName = Object.keys(FORM_CONFIGS)[0];
-  formConfig = FORM_CONFIGS[defaultConfigName];
-  console.log(`📋 Auto-using form config: ${defaultConfigName}`);
-} else {
-  console.log('⚠️  No form configurations available');
-  console.log('💡 Add form configs to config/custom-forms.js to enable form testing');
-}
 
 if (!url) {
   console.log(`Usage: node gtm-tracker.js <url> [options]`);

@@ -13,19 +13,19 @@ const CONFIG = {
   // ============================================================================
 
   RUN_GA_CATEGORIES: {
-    click: true,
-    scroll: true,
-    page_view: true,
+    click: false,
+    scroll: false,
+    page_view: false,
     exit_modal: false,
     forms: true                   // Enable form testing
   },
 
   // Form Test Scenarios - which tests to run
   FORM_TEST_SCENARIOS: {
-    individualFields: true,      // Test each field individually with blur events
+    individualFields: false,      // Test each field individually with blur events
     validSubmission: true,        // Submit form with valid data
-    emptySubmission: true,        // Submit empty form to check validation
-    invalidSubmission: true       // Submit form with invalid data
+    emptySubmission: false,        // Submit empty form to check validation
+    invalidSubmission: false       // Submit form with invalid data
   },
 
   REPORT_GENERATION: {
@@ -47,7 +47,23 @@ const CONFIG = {
   GLOBAL: {
     // Browser settings
     viewport: { width: 1280, height: 720 },
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    // Updated to Chrome 131 (more recent, less likely to be flagged)
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+    
+
+    chromiumArgs: [
+    ],
+    
+    extraHTTPHeaders: {
+      'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+      // 'sec-ch-ua-mobile': '?0',
+      // 'sec-ch-ua-platform': '"Windows"',
+      // 'sec-fetch-dest': 'document',
+      // 'sec-fetch-mode': 'navigate',
+      // 'sec-fetch-site': 'none',
+      // 'sec-fetch-user': '?1',
+      // 'upgrade-insecure-requests': '1',
+    },
     
     // Timing
     browserTimeout: 30000,      // Timeout for browser operations

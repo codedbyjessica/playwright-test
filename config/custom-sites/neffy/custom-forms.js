@@ -12,7 +12,8 @@
  * Optional but recommended:
  * - fields: Detailed field configuration for individual testing
  * - expectedErrors: Error selectors to validate error states
- * - tracking.formCode: GTM form identifier for tracking
+ * 
+ * Note: Form code is automatically derived from the object key (e.g., 'neffy_consumer_signup')
  * 
  * @author AI Assistant
  * @version 1.0
@@ -168,11 +169,8 @@ const FORM_CONFIGS = {
       }
     },
     
-    // GTM tracking configuration (form-specific)
-    tracking: {
-      formCode: 'form_neffy_consumer_signup'
-      // Note: All timing configurations are in config/main.js → CONFIG.FORM
-    }
+    // Note: All timing configurations are in config/main.js → CONFIG.FORM
+    // Form code is automatically derived from the object key (neffy_consumer_signup)
   },
 
   // Example: Generic form (minimal config)
@@ -183,10 +181,7 @@ const FORM_CONFIGS = {
     formSelector: '#contact-form',
     submitButtonSelector: 'button[type="submit"]',
     
-    // Optional: Add specific tracking code
-    tracking: {
-      formCode: 'form_contact'
-    }
+    // Note: Form code is automatically derived from the object key (contact_form)
     
     // Optional: Add detailed field configs for individual field testing
     // fields: { ... }

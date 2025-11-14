@@ -15,14 +15,16 @@
 
 const CONFIG = require('../config/main');
 const NetworkHandler = require('../utils/network-handler');
+const CustomActionsExecutor = require('../utils/custom-actions');
 const { log } = require('../utils/logger');
 
 class FormTester {
-  constructor(page, networkEvents, formConfig, extractEventsFromNetworkDataFn) {
+  constructor(page, networkEvents, formConfig, extractEventsFromNetworkDataFn, afterRefreshAction = null) {
     this.page = page;
     this.networkEvents = networkEvents;
     this.config = formConfig;
     this.extractEventsFromNetworkData = extractEventsFromNetworkDataFn;
+    this.afterRefreshAction = afterRefreshAction;
     this.testResults = [];
     this.fieldTestResults = [];
   }
@@ -93,7 +95,7 @@ class FormTester {
       }
       
       // Wait 8 seconds for GA4 events to fire
-      log(`⏳ Waiting 8 seconds for GA4 events after "${fieldName}" interaction...`);
+      log(`⏳ Waiting ${CONFIG.FORM.eventDelay} seconds for GA4 events after "${fieldName}" interaction...`);
       await this.page.waitForTimeout(CONFIG.FORM.eventDelay);
       
       const actionEndTime = Date.now();
@@ -478,6 +480,11 @@ class FormTester {
     log(`🔄 Refreshing page for ${phaseName}...`);
     await this.page.reload({ waitUntil: 'domcontentloaded' });
     await this.page.waitForTimeout(2000); // Wait for page to stabilize
+    
+    // Execute pre-test actions after reload (e.g., close popups)
+    if (this.afterRefreshAction) {
+      await CustomActionsExecutor.execute(this.page, this.afterRefreshAction);
+    }
     
     // Check if form still exists after refresh
     const formExists = await this.page.$(this.config.formSelector);

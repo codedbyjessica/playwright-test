@@ -1,0 +1,19 @@
+{
+    "sites": [
+
+        {"name":"alyftrek", "baseUrl": "https://www.alyftrek.com"},
+        {"baseUrl": "https://www.alyftrekhcp.com"},
+        {"baseUrl": "https://www.trikafta.com"},
+        {"baseUrl": "https://www.trikaftahcp.com"},
+        {"baseUrl": "https://www.orkambi.com"},
+        {"baseUrl": "https://www.orkambihcp.com"},
+        {"baseUrl": "https://www.kalydeco.com"},
+        {"baseUrl": "https://www.kalydecohcp.com"},
+        {"baseUrl": "https://www.symdeko.com"},
+        {"baseUrl": "https://www.symdekohcp.com"},
+        {"baseUrl": "https://www.everyday-cf.com"},
+        {"baseUrl": "https://www.cfsourcehcp.com"},
+        {"baseUrl": "https://www.vertextreatments.com"},
+        {"baseUrl": "https://www.vertextreatmentshcp.com"}
+    ]
+}
