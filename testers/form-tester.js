@@ -19,11 +19,11 @@ const CustomActionsExecutor = require('../utils/custom-actions');
 const { log } = require('../utils/logger');
 
 class FormTester {
-  constructor(page, networkEvents, formConfig, extractEventsFromNetworkDataFn, afterRefreshAction = null) {
+  constructor(page, networkEvents, formConfig, clickEvents = [], afterRefreshAction = null) {
     this.page = page;
     this.networkEvents = networkEvents;
     this.config = formConfig;
-    this.extractEventsFromNetworkData = extractEventsFromNetworkDataFn;
+    this.clickEvents = clickEvents;
     this.afterRefreshAction = afterRefreshAction;
     this.testResults = [];
     this.fieldTestResults = [];
@@ -290,7 +290,7 @@ class FormTester {
       page: this.page,
       startTime: submitTime,
       networkEvents: this.networkEvents,
-      extractEventsFromNetworkData: this.extractEventsFromNetworkData,
+      clickEvents: this.clickEvents,
       timeout: CONFIG.FORM.eventDelay,
       actionInfo: {
         action: 'form_submit',
@@ -339,7 +339,7 @@ class FormTester {
       page: this.page,
       startTime: submitTime,
       networkEvents: this.networkEvents,
-      extractEventsFromNetworkData: this.extractEventsFromNetworkData,
+      clickEvents: this.clickEvents,
       timeout: CONFIG.FORM.eventDelay,
       actionInfo: {
         action: 'form_submit',
@@ -409,7 +409,7 @@ class FormTester {
       page: this.page,
       startTime: submitTime,
       networkEvents: this.networkEvents,
-      extractEventsFromNetworkData: this.extractEventsFromNetworkData,
+      clickEvents: this.clickEvents,
       timeout: CONFIG.FORM.eventDelay,
       actionInfo: {
         action: 'form_submit',

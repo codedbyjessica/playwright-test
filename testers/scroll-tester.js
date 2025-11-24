@@ -15,11 +15,11 @@ const NetworkHandler = require('../utils/network-handler');
 const { log } = require('../utils/logger');
 
 class ScrollTester {
-  constructor(page, networkEvents, matchedNetworkEventKeys, extractEventsFromNetworkDataFn) {
+  constructor(page, networkEvents, matchedNetworkEventKeys, clickEvents = []) {
     this.page = page;
     this.networkEvents = networkEvents;
     this.matchedNetworkEventKeys = matchedNetworkEventKeys;
-    this.extractEventsFromNetworkDataFn = extractEventsFromNetworkDataFn;
+    this.clickEvents = clickEvents;
     this.scrollEvents = [];
   }
 
@@ -64,7 +64,7 @@ class ScrollTester {
         position, 
         this.networkEvents, 
         this.matchedNetworkEventKeys, 
-        this.extractEventsFromNetworkDataFn
+        this.clickEvents
       );
       
       // Record scroll event with network event matching

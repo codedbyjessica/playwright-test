@@ -89,25 +89,6 @@ class GTMTracker {
     this.runFormTests = CONFIG.RUN_GA_CATEGORIES.forms;
   }
 
-  // Helper methods for creating functions that need this.clickEvents
-  createExtractEventsFromNetworkData() {
-    return (networkEvent) => {
-      const parseEventsFromData = (data, eventTimestamp, source = 'POST', networkUrl = '', postData = '') => {
-        return EventParser.parseEventsFromData(
-          data, 
-          eventTimestamp, 
-          source, 
-          networkUrl, 
-          postData, 
-          this.clickEvents,
-          EventClassifier.findRelatedTriggers,
-          EventClassifier.generateTriggerAction
-        );
-      };
-      
-      return EventParser.extractEventsFromNetworkData(networkEvent, parseEventsFromData);
-    };
-  }
 
 
   async init() {
@@ -284,7 +265,7 @@ class GTMTracker {
         this.page, 
         formNetworkEvents, 
         this.formConfig,
-        this.createExtractEventsFromNetworkData(),
+        this.clickEvents,
         this.customFunctions?.afterRefreshAction || null
       );
       await formTester.runAllTests();
@@ -359,7 +340,7 @@ class GTMTracker {
           this.page,
           this.networkEvents,
           this.matchedNetworkEventKeys,
-          this.createExtractEventsFromNetworkData()
+          this.clickEvents
         );
         await scrollTester.runScrollTests();
         const scrollResults = scrollTester.getResults();
@@ -373,7 +354,7 @@ class GTMTracker {
           this.page,
           this.networkEvents,
           this.matchedNetworkEventKeys,
-          this.createExtractEventsFromNetworkData(),
+          this.clickEvents,
           this.customFunctions?.afterRefreshAction || null
         );
         await clickTester.runClickTests();
@@ -411,7 +392,7 @@ class GTMTracker {
         this.networkEvents,
         this.clickEvents,
         this.scrollEvents,
-        this.createExtractEventsFromNetworkData(),
+        this.clickEvents,
         this.formTestResults,
         {
           startTime,
@@ -434,7 +415,7 @@ class GTMTracker {
           this.networkEvents,
           this.clickEvents,
           this.scrollEvents,
-          this.createExtractEventsFromNetworkData(),
+          this.clickEvents,
           this.formTestResults,
           { startTime, endTime, totalTime }
         );

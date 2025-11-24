@@ -136,15 +136,30 @@ class EventParser {
   }
 
   // Helper function to extract events from network data (POST or URL)
-  static extractEventsFromNetworkData(networkEvent, parseEventsFromDataFn) {
+  static extractEventsFromNetworkData(networkEvent, clickEvents = []) {
+    const EventClassifier = require('./event-classifier');
+    
+    const parseEventsFromData = (data, eventTimestamp, source = 'POST', networkUrl = '', postData = '') => {
+      return EventParser.parseEventsFromData(
+        data, 
+        eventTimestamp, 
+        source, 
+        networkUrl, 
+        postData, 
+        clickEvents,
+        EventClassifier.findRelatedTriggers,
+        EventClassifier.generateTriggerAction
+      );
+    };
+    
     let extractedEvents = [];
     
     if (networkEvent.postData) {
-      extractedEvents = parseEventsFromDataFn(networkEvent.postData, networkEvent.timestamp, 'POST', networkEvent.url, networkEvent.postData);
+      extractedEvents = parseEventsFromData(networkEvent.postData, networkEvent.timestamp, 'POST', networkEvent.url, networkEvent.postData);
     }
     
     if (extractedEvents.length === 0 && CONFIG.GLOBAL.ga4Urls.some(ga4Url => networkEvent.url.includes(ga4Url))) {
-      extractedEvents = parseEventsFromDataFn(networkEvent.url, networkEvent.timestamp, 'URL', networkEvent.url, networkEvent.postData || '');
+      extractedEvents = parseEventsFromData(networkEvent.url, networkEvent.timestamp, 'URL', networkEvent.url, networkEvent.postData || '');
     }
     
     return extractedEvents;

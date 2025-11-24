@@ -18,13 +18,12 @@ const CustomActionsExecutor = require('../utils/custom-actions');
 const { log } = require('../utils/logger');
 
 class ClickTester {
-  constructor(page, networkEvents, matchedNetworkEventKeys, extractEventsFromNetworkDataFn, afterRefreshAction = null) {
+  constructor(page, networkEvents, matchedNetworkEventKeys, clickEvents = [], afterRefreshAction = null) {
     this.page = page;
     this.networkEvents = networkEvents;
     this.matchedNetworkEventKeys = matchedNetworkEventKeys;
-    this.extractEventsFromNetworkDataFn = extractEventsFromNetworkDataFn;
+    this.clickEvents = clickEvents; // Reference to shared clickEvents array
     this.afterRefreshAction = afterRefreshAction;
-    this.clickEvents = [];
     this.excludeSelectors = CONFIG.ONETRUST.selector;
   }
 
@@ -216,7 +215,7 @@ class ClickTester {
           dropdownInfo, 
           this.networkEvents, 
           this.matchedNetworkEventKeys, 
-          this.extractEventsFromNetworkDataFn
+          this.clickEvents
         );
         
         // Record dropdown click
@@ -311,7 +310,7 @@ class ClickTester {
             elementInfo, 
             this.networkEvents, 
             this.matchedNetworkEventKeys, 
-            this.extractEventsFromNetworkDataFn
+            this.clickEvents
           );
           
           // Record successful click

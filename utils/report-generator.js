@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const CONFIG = require('../config/main');
 const EventClassifier = require('./event-classifier');
+const EventParser = require('./event-parser');
 
 class ReportGenerator {
   constructor() {
@@ -210,7 +211,7 @@ class ReportGenerator {
   }
 
   // Helper function to generate events section HTML
-  generateEventsSectionHTML(networkEvents, clickEvents, extractEventsFromNetworkData, eventType, title, icon) {
+  generateEventsSectionHTML(networkEvents, clickEvents, eventType, title, icon) {
     // Filter out form testing events from main network analysis
     const nonFormNetworkEvents = networkEvents.filter(event => 
       event.type === 'request' && event.source !== 'form_testing'
@@ -218,12 +219,12 @@ class ReportGenerator {
     
     // Special handling for pageview events
     if (eventType === 'pageview') {
-      return this.generatePageviewEventsHTML(nonFormNetworkEvents, clickEvents, extractEventsFromNetworkData, title, icon);
+      return this.generatePageviewEventsHTML(nonFormNetworkEvents, clickEvents, title, icon);
     }
     
     // Calculate count for unmatched events
     const eventCount = nonFormNetworkEvents.filter(event => {
-      const extractedEvents = extractEventsFromNetworkData(event);
+      const extractedEvents = EventParser.extractEventsFromNetworkData(event, clickEvents);
       const filteredEvents = EventClassifier.filterEventsByType(extractedEvents, eventType, clickEvents);
       return filteredEvents.length > 0;
     }).length;
@@ -241,7 +242,7 @@ class ReportGenerator {
         <div class="accordion-content" style="${displayStyle}">
           <div id="${eventType}EventsContainer">
             ${nonFormNetworkEvents.map((event, idx) => {
-              const extractedEvents = extractEventsFromNetworkData(event);
+              const extractedEvents = EventParser.extractEventsFromNetworkData(event, clickEvents);
               const filteredEvents = EventClassifier.filterEventsByType(extractedEvents, eventType, clickEvents);
               return filteredEvents.length > 0 ? this.generateEventHTML(event, filteredEvents) : '';
             }).join('')}
@@ -252,12 +253,12 @@ class ReportGenerator {
   }
 
   // Specialized function for pageview events with prominent URL display
-  generatePageviewEventsHTML(networkEvents, clickEvents, extractEventsFromNetworkData, title, icon) {
+  generatePageviewEventsHTML(networkEvents, clickEvents, title, icon) {
     const pageviewEvents = [];
     
     // networkEvents is already filtered to exclude form testing events
     networkEvents.forEach(event => {
-      const extractedEvents = extractEventsFromNetworkData(event);
+      const extractedEvents = EventParser.extractEventsFromNetworkData(event, clickEvents);
       const filteredEvents = EventClassifier.filterEventsByType(extractedEvents, 'pageview', clickEvents);
       if (filteredEvents.length > 0) {
         pageviewEvents.push({ event, extractedEvents: filteredEvents });
@@ -370,7 +371,7 @@ class ReportGenerator {
   }
 
   // Helper function to generate scroll events HTML
-  generateScrollEventsHTML(scrollEvents, extractEventsFromNetworkData) {
+  generateScrollEventsHTML(scrollEvents, clickEvents) {
     const scrollsWithEvents = scrollEvents && scrollEvents.length > 0 ? scrollEvents.filter(scroll => 
       scroll.matchedNetworkEvents && scroll.matchedNetworkEvents.length > 0
     ) : [];
@@ -385,7 +386,7 @@ class ReportGenerator {
         let eventDetailsHtml = '';
         
         scroll.matchedNetworkEvents.forEach((networkEvent, eventIdx) => {
-          const extractedEvents = extractEventsFromNetworkData(networkEvent);
+          const extractedEvents = EventParser.extractEventsFromNetworkData(networkEvent, clickEvents);
           
           if (extractedEvents.length > 0) {
             extractedEvents.forEach((evt, extractedEventIdx) => {
@@ -645,7 +646,7 @@ class ReportGenerator {
   }
 
   // Build all events array - shared logic for CSV and JSON
-  buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents, extractEventsFromNetworkData) {
+  buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents) {
     const allEvents = [];
     const seenNetworkUrls = new Set(); // Track which network URLs we've already processed
     
@@ -653,12 +654,6 @@ class ReportGenerator {
     clickEvents = Array.isArray(clickEvents) ? clickEvents : [];
     scrollEvents = Array.isArray(scrollEvents) ? scrollEvents : [];
     networkEvents = Array.isArray(networkEvents) ? networkEvents : [];
-    
-    // If extractEventsFromNetworkData is not a function, return empty array
-    if (typeof extractEventsFromNetworkData !== 'function') {
-      console.warn('⚠️ extractEventsFromNetworkData is not a function, returning empty events array');
-      return allEvents;
-    }
     
     // Add click events
     if (clickEvents && clickEvents.length > 0) {
@@ -676,7 +671,7 @@ class ReportGenerator {
                 // Mark this network URL as seen
                 seenNetworkUrls.add(networkEvent.url);
                 
-                const extractedEvents = extractEventsFromNetworkData(networkEvent);
+                const extractedEvents = EventParser.extractEventsFromNetworkData(networkEvent, clickEvents);
                 
                 extractedEvents.forEach(event => {
                   allEvents.push({
@@ -760,7 +755,7 @@ class ReportGenerator {
             // Mark this network URL as seen
             seenNetworkUrls.add(networkEvent.url);
             
-            const extractedEvents = extractEventsFromNetworkData(networkEvent);
+            const extractedEvents = EventParser.extractEventsFromNetworkData(networkEvent, clickEvents);
             
             extractedEvents.forEach(event => {
               allEvents.push({
@@ -795,7 +790,7 @@ class ReportGenerator {
             // Mark this network URL as seen
             seenNetworkUrls.add(networkEvent.url);
             
-            const extractedEvents = extractEventsFromNetworkData(networkEvent);
+            const extractedEvents = EventParser.extractEventsFromNetworkData(networkEvent, clickEvents);
             
             extractedEvents.forEach(event => {
               allEvents.push({
@@ -862,7 +857,7 @@ class ReportGenerator {
           return; // Skip this event - already included
         }
         
-        const extractedEvents = extractEventsFromNetworkData(networkEvent);
+        const extractedEvents = EventParser.extractEventsFromNetworkData(networkEvent, clickEvents);
         
         extractedEvents.forEach(event => {
           allEvents.push({
@@ -900,11 +895,11 @@ class ReportGenerator {
   }
   
   // Generate CSV report
-  async generateCSVReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData) {
+  async generateCSVReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults) {
     console.log('\n📊 === GENERATING CSV REPORT ===');
     
     // Use shared logic to build events array
-    const allEvents = this.buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents, extractEventsFromNetworkData);
+    const allEvents = this.buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents);
     
     const csvRows = [];
     
@@ -954,11 +949,11 @@ class ReportGenerator {
   }
 
   // Generate JSON report  
-  async generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData) {
+  async generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults) {
     console.log('\n📊 === GENERATING JSON REPORT FOR ARD ANALYSIS ===');
     
     // Use the EXACT same logic as CSV generation for consistency
-    const allEvents = this.buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents, extractEventsFromNetworkData);
+    const allEvents = this.buildAllEventsArray(clickEvents, scrollEvents, formTestResults, networkEvents);
     
     // Create the JSON report data
     const jsonReport = {
@@ -983,7 +978,7 @@ class ReportGenerator {
   }
 
   // Generate HTML report
-  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, formTestResults = null, timingInfo = null) {
+  async generateHTMLReport(options, networkEvents, clickEvents, scrollEvents, formTestResults = null, timingInfo = null) {
     console.log('\n📋 === NETWORK EVENTS REPORT ===');
     
     console.log(`🔍 REPORT DEBUG: Received ${networkEvents.length} network events`);
@@ -1024,15 +1019,15 @@ class ReportGenerator {
     console.log(`\n📋 Generating ${enabledReports.join(', ')} report${enabledReports.length > 1 ? 's' : ''}...`);
     
     if (CONFIG.REPORT_GENERATION.csv) {
-      await this.generateCSVReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData);
+      await this.generateCSVReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults);
     }
 
     if (CONFIG.REPORT_GENERATION.json) {
-      await this.generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults, extractEventsFromNetworkData);
+      await this.generateJSONReport(testResultsDir, reportFilename, options, networkEvents, clickEvents, scrollEvents, formTestResults);
     }
 
     if (CONFIG.REPORT_GENERATION.html) {
-      const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, formTestResults, timingInfo);
+      const html = this.generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, formTestResults, timingInfo);
       const htmlPath = path.join(testResultsDir, `${reportFilename}.html`);
       fs.writeFileSync(htmlPath, html);
       console.log(`\n🌐 HTML report saved to ${htmlPath}`);
@@ -1040,7 +1035,7 @@ class ReportGenerator {
   }
 
   // Generate the main HTML content
-  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, extractEventsFromNetworkData, formTestResults = null, timingInfo = null) {
+  generateHTMLContent(options, requests, networkEvents, clickEvents, scrollEvents, formTestResults = null, timingInfo = null) {
     // Format timing information if available
     let timingHTML = '';
     if (timingInfo) {
@@ -1362,7 +1357,7 @@ class ReportGenerator {
         <div class="section">
             <h2>🌐 Website Interaction Analysis</h2>
             
-            ${this.generateEventsSectionHTML(networkEvents, clickEvents, extractEventsFromNetworkData, 'pageview', 'Pageview Events', '📄')}
+            ${this.generateEventsSectionHTML(networkEvents, clickEvents, 'pageview', 'Pageview Events', '📄')}
             
             <!-- Scroll Actions with GA4 Events Section -->
             <div class="subsection">
@@ -1371,7 +1366,7 @@ class ReportGenerator {
                 </h3>
                 <div class="accordion-content" style="display: block;">
                     <div id="scrollActionsContainer">
-                        ${scrollEvents ? this.generateScrollEventsHTML(scrollEvents, extractEventsFromNetworkData) : '<p>No scroll events data available.</p>'}
+                        ${scrollEvents ? this.generateScrollEventsHTML(scrollEvents, clickEvents) : '<p>No scroll events data available.</p>'}
                     </div>
                 </div>
             </div>
@@ -1393,7 +1388,7 @@ class ReportGenerator {
                             
                             if (click.matchedNetworkEvents && click.matchedNetworkEvents.length > 0) {
                                 click.matchedNetworkEvents.forEach((networkEvent, eventIdx) => {
-                                    const extractedEvents = extractEventsFromNetworkData(networkEvent);
+                                    const extractedEvents = EventParser.extractEventsFromNetworkData(networkEvent, clickEvents);
                                     
                                     extractedEvents.forEach((evt, extractedEventIdx) => {
                                         // Filter at the VERY last moment - skip excluded events
@@ -1452,7 +1447,7 @@ class ReportGenerator {
             </div>
             ` : ''}
 
-            ${this.generateEventsSectionHTML(networkEvents, clickEvents, extractEventsFromNetworkData, 'unmatched', 'Unmatched Network Events', '❓')}
+            ${this.generateEventsSectionHTML(networkEvents, clickEvents, 'unmatched', 'Unmatched Network Events', '❓')}
             
             <!-- Unmatched Click Events Section -->
             <div class="subsection">
