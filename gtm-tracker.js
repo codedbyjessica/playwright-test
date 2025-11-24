@@ -53,7 +53,6 @@ class GTMTracker {
       url: options.url || 'https://example.com',
       headless: options.headless !== false,
       timeout: options.timeout || CONFIG.GLOBAL.browserTimeout,
-      clickPause: options.clickPause || CONFIG.CLICK.eventDelay,
       ...options
     };
     
@@ -365,7 +364,7 @@ class GTMTracker {
         await scrollTester.runScrollTests();
         const scrollResults = scrollTester.getResults();
         this.scrollEvents = scrollResults.scrollEvents;
-        await this.page.waitForTimeout(CONFIG.CLICK.eventDelay);
+        await this.page.waitForTimeout(CONFIG.SCROLL.eventDelay);
       }
 
       // Click testing
@@ -460,15 +459,6 @@ const url = args[0];
 const headless = args.includes('--headless');
 console.log('🎯 PARSED ARGS - URL:', url, 'Headless:', headless);
 
-// Parse click pause option
-let clickPause = CONFIG.CLICK.eventDelay; // default
-const clickPauseArg = args.find(arg => arg.startsWith('--click-pause='));
-if (clickPauseArg) {
-  const pauseValue = parseInt(clickPauseArg.split('=')[1]);
-  if (!isNaN(pauseValue) && pauseValue > 0) {
-    clickPause = pauseValue;
-  }
-}
 
 // Parse form config option (optional - can specify which form config to use)
 // Note: Form config loading is now domain-based and handled in GTMTracker constructor
@@ -494,7 +484,6 @@ if (!url) {
   console.log('');
   console.log('Options:');
   console.log('  --headless                Run in headless mode');
-  console.log(`  --click-pause=N           Pause after each action in milliseconds (default: ${CONFIG.CLICK.eventDelay})`);
   console.log('  --form-config=NAME        Specify form configuration to use (auto-detects by URL if not specified)');
   console.log('');
   console.log('💡 Tip: Use ard-compare.js to compare results against ARD requirements:');
@@ -517,7 +506,6 @@ if (!url) {
 const tracker = new GTMTracker({ 
   url, 
   headless, 
-  clickPause, 
   formConfig 
 });
 

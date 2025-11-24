@@ -13,19 +13,19 @@ const CONFIG = {
   // ============================================================================
 
   RUN_GA_CATEGORIES: {
-    click: false,
-    scroll: false,
-    page_view: false,
+    click: true,
+    scroll: true,
+    page_view: true,
     exit_modal: false,
     forms: true                   // Enable form testing
   },
 
   // Form Test Scenarios - which tests to run
   FORM_TEST_SCENARIOS: {
-    individualFields: false,      // Test each field individually with blur events
+    individualFields: true,      // Test each field individually with blur events
     validSubmission: true,        // Submit form with valid data
-    emptySubmission: false,        // Submit empty form to check validation
-    invalidSubmission: false       // Submit form with invalid data
+    emptySubmission: true,        // Submit empty form to check validation
+    invalidSubmission: true       // Submit form with invalid data
   },
 
   REPORT_GENERATION: {
@@ -36,8 +36,8 @@ const CONFIG = {
 
   ARD_REPORT_GENERATION: {
     html: true,
-    csv: false,
-    json: false,
+    csv: true,
+    json: true,
   },
 
 
