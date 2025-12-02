@@ -11,6 +11,8 @@
  * @version 1.0
  */
 
+const fs = require('fs').promises;
+const path = require('path');
 const CONFIG = require('../config/main');
 const ElementHandler = require('../utils/element-handler');
 const NetworkHandler = require('../utils/network-handler');
@@ -242,9 +244,229 @@ class ClickTester {
   }
 
   /**
+   * Generate cache filename from URL
+   * @param {string} url - URL to generate cache filename for
+   * @returns {string} Cache file path
+   */
+  getCacheFilePath(url) {
+    try {
+      const urlObj = new URL(url);
+      const hostname = urlObj.hostname.replace(/\./g, '_');
+      // Clean pathname: remove leading slash, replace slashes with underscores, remove special chars
+      let pathname = urlObj.pathname.replace(/^\//, '').replace(/\//g, '_').replace(/[^a-zA-Z0-9_]/g, '') || 'root';
+      // Limit pathname length to avoid filesystem issues
+      if (pathname.length > 100) {
+        pathname = pathname.substring(0, 100);
+      }
+      const filename = `clickable-elements_${hostname}_${pathname}.json`;
+      const cacheDir = path.join(__dirname, '..', 'cache');
+      return path.join(cacheDir, filename);
+    } catch (error) {
+      // Fallback if URL parsing fails
+      const sanitized = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 100);
+      const filename = `clickable-elements_${sanitized}.json`;
+      const cacheDir = path.join(__dirname, '..', 'cache');
+      return path.join(cacheDir, filename);
+    }
+  }
+
+  /**
+   * Extract element info from all elements
+   * @param {Array} elements - Array of Playwright element handles
+   * @returns {Promise<Array>} Array of element info objects
+   */
+  async extractElementsInfo(elements) {
+    const elementsData = [];
+    for (const element of elements) {
+      try {
+        const elementInfo = await ElementHandler.getElementInfo(element);
+        elementsData.push(elementInfo);
+      } catch (error) {
+        log(`⚠️  Could not extract info for element: ${error.message}`);
+      }
+    }
+    return elementsData;
+  }
+
+  /**
+   * Save clickable elements to JSON cache
+   * @param {string} url - URL of the page
+   * @param {Array} elements - Array of Playwright element handles
+   * @returns {Promise<void>}
+   */
+  async saveClickableElementsToCache(url, elements) {
+    try {
+      const cachePath = this.getCacheFilePath(url);
+      const cacheDir = path.dirname(cachePath);
+      
+      // Ensure cache directory exists
+      await fs.mkdir(cacheDir, { recursive: true });
+      
+      // Extract element info for each element
+      const elementsData = await this.extractElementsInfo(elements);
+      
+      const cacheData = {
+        url: url,
+        timestamp: new Date().toISOString(),
+        elementCount: elementsData.length,
+        elements: elementsData
+      };
+      
+      await fs.writeFile(cachePath, JSON.stringify(cacheData, null, 2));
+      log(`💾 Saved ${elementsData.length} clickable elements to cache: ${path.basename(cachePath)}`);
+    } catch (error) {
+      log(`⚠️  Could not save clickable elements to cache: ${error.message}`);
+    }
+  }
+
+  /**
+   * Load clickable elements from JSON cache
+   * @param {string} url - URL of the page
+   * @returns {Promise<Object|null>} Cache data or null if not found
+   */
+  async loadClickableElementsFromCache(url) {
+    try {
+      const cachePath = this.getCacheFilePath(url);
+      const cacheContent = await fs.readFile(cachePath, 'utf-8');
+      const cacheData = JSON.parse(cacheContent);
+      
+      // Verify URL matches (in case of redirects or similar URLs)
+      if (cacheData.url !== url) {
+        log(`⚠️  Cache URL mismatch: cached ${cacheData.url} vs current ${url}`);
+      }
+      
+      log(`📂 Loaded ${cacheData.elementCount} clickable elements from cache: ${path.basename(cachePath)}`);
+      return cacheData;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        // Cache file doesn't exist, which is fine
+        return null;
+      }
+      log(`⚠️  Could not load clickable elements from cache: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Try to find element by text content using XPath
+   * @param {Object} cachedElement - Cached element info
+   * @returns {Promise<ElementHandle|null>} Found element or null
+   */
+  async findElementByTextContent(cachedElement) {
+    if (!cachedElement.textContent || !cachedElement.tagName) {
+      return null;
+    }
+    
+    try {
+      const textSnippet = cachedElement.textContent.substring(0, 50);
+      const xpath = `//${cachedElement.tagName}[contains(text(), "${textSnippet}")]`;
+      const textElements = await this.page.locator(`xpath=${xpath}`).all();
+      return textElements.length > 0 ? textElements[0] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Try to find element by ID
+   * @param {Object} cachedElement - Cached element info
+   * @returns {Promise<ElementHandle|null>} Found element or null
+   */
+  async findElementById(cachedElement) {
+    if (!cachedElement.id) {
+      return null;
+    }
+    
+    try {
+      const idElements = await this.page.$$(`#${cachedElement.id}`);
+      return idElements.length > 0 ? idElements[0] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Match element from multiple candidates by text content
+   * @param {Array} elements - Array of candidate elements
+   * @param {string} expectedText - Expected text content
+   * @returns {Promise<ElementHandle|null>} Matched element or null
+   */
+  async matchElementByText(elements, expectedText) {
+    if (!expectedText) {
+      return elements[0] || null;
+    }
+    
+    for (const element of elements) {
+      try {
+        const textContent = await element.textContent();
+        if (textContent && textContent.trim() === expectedText.trim()) {
+          return element;
+        }
+      } catch {
+        continue;
+      }
+    }
+    
+    return elements[0] || null;
+  }
+
+  /**
+   * Find a single element from cache using multiple strategies
+   * @param {Object} cachedElement - Cached element info
+   * @returns {Promise<ElementHandle|null>} Found element or null
+   */
+  async findSingleElementFromCache(cachedElement) {
+    try {
+      // Strategy 1: Try selector first (most reliable)
+      const elements = await this.page.$$(cachedElement.selector);
+      
+      if (elements.length === 0) {
+        // Strategy 2: Try by text content
+        const textElement = await this.findElementByTextContent(cachedElement);
+        if (textElement) return textElement;
+        
+        // Strategy 3: Try by ID
+        const idElement = await this.findElementById(cachedElement);
+        if (idElement) return idElement;
+        
+        log(`⚠️  Could not find element with selector: ${cachedElement.selector}`);
+        return null;
+      }
+      
+      // If multiple matches, try to match by text content
+      if (elements.length > 1 && cachedElement.textContent) {
+        return await this.matchElementByText(elements, cachedElement.textContent);
+      }
+      
+      return elements[0];
+    } catch (error) {
+      log(`⚠️  Error finding element from cache: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Find elements on page using cached selectors
+   * @param {Array} cachedElements - Array of cached element info with selectors
+   * @returns {Promise<Array>} Array of Playwright element handles
+   */
+  async findElementsFromCache(cachedElements) {
+    const foundElements = [];
+    
+    for (const cachedElement of cachedElements) {
+      const element = await this.findSingleElementFromCache(cachedElement);
+      if (element) {
+        foundElements.push(element);
+      }
+    }
+    
+    return foundElements;
+  }
+
+  /**
    * Refresh page and execute pre-test actions
    * @param {string} url - URL to navigate to
-   * @returns {Promise<Array>} Refreshed clickable elements
+   * @returns {Promise<void>}
    */
   async refreshPage(url) {
     await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: CONFIG.GLOBAL.browserTimeout });
@@ -254,9 +476,87 @@ class ClickTester {
     if (this.afterRefreshAction) {
       await CustomActionsExecutor.execute(this.page, this.afterRefreshAction);
     }
+  }
+
+  /**
+   * Re-find elements after page refresh
+   * @param {Object|null} cacheData - Cached element data or null
+   * @returns {Promise<Array>} Array of refreshed element handles
+   */
+  async refreshElements(cacheData) {
+    if (cacheData && cacheData.elements) {
+      // Use cached selectors to find elements
+      return await this.findElementsFromCache(cacheData.elements);
+    } else {
+      // Fallback to querying all elements
+      return await this.page.$$(CONFIG.CLICK.selector.join(', '));
+    }
+  }
+
+  /**
+   * Calculate estimated time for click testing
+   * @param {number} elementCount - Number of clickable elements
+   * @returns {Object} Time estimation data
+   */
+  calculateEstimatedTime(elementCount) {
+    const firstClickTime = CONFIG.CLICK.eventDelay;
+    const subsequentClickTime = CONFIG.GLOBAL.pageLoadTimeout + CONFIG.CLICK.eventDelay;
+    const estimatedTimeMs = firstClickTime + (elementCount - 1) * subsequentClickTime;
+    const estimatedSeconds = (estimatedTimeMs / 1000).toFixed(1);
+    const estimatedMinutes = (estimatedTimeMs / 60000).toFixed(1);
     
-    // Re-query all elements after reload
-    return await this.page.$$(CONFIG.CLICK.selector.join(', '));
+    return {
+      totalMs: estimatedTimeMs,
+      seconds: estimatedSeconds,
+      minutes: estimatedMinutes,
+      perClick: subsequentClickTime
+    };
+  }
+
+  /**
+   * Log estimated time for click testing
+   * @param {number} elementCount - Number of clickable elements
+   */
+  logEstimatedTime(elementCount) {
+    const timeEstimate = this.calculateEstimatedTime(elementCount);
+    const timeDisplay = timeEstimate.totalMs < 60000 
+      ? `${timeEstimate.seconds} s` 
+      : `${timeEstimate.minutes} min`;
+    
+    log(`⏱️  Estimated time: ~${timeDisplay} (${elementCount} elements × ~${(timeEstimate.perClick / 1000).toFixed(1)}s per click)`);
+  }
+
+  /**
+   * Initialize clickable elements (load from cache or query page)
+   * @param {string} url - URL of the page
+   * @returns {Promise<Object>} Object with elements array and cache data
+   */
+  async initializeClickableElements(url) {
+    let clickableElements = [];
+    let cacheData = await this.loadClickableElementsFromCache(url);
+    
+    if (cacheData && cacheData.elements) {
+      // Use cached elements - find them on the page using selectors
+      log(`📂 Using cached clickable elements (${cacheData.elementCount} elements)`);
+      clickableElements = await this.findElementsFromCache(cacheData.elements);
+      log(`✅ Found ${clickableElements.length} elements from cache on page`);
+      
+      // If we found fewer elements than cached, log a warning
+      if (clickableElements.length < cacheData.elementCount) {
+        log(`⚠️  Found ${clickableElements.length} elements but cache has ${cacheData.elementCount} - some elements may have changed`);
+      }
+    } else {
+      // No cache found, query page and save to cache
+      clickableElements = await this.page.$$(CONFIG.CLICK.selector.join(', '));
+      log(`Found ${clickableElements.length} clickable elements`);
+      
+      // Save to cache for future use
+      await this.saveClickableElementsToCache(url, clickableElements);
+      // Reload cache data for refresh logic
+      cacheData = await this.loadClickableElementsFromCache(url);
+    }
+    
+    return { clickableElements, cacheData };
   }
 
   /**
@@ -269,15 +569,20 @@ class ClickTester {
       // Store the original URL to reload between clicks
       const originalUrl = this.page.url();
       
-      // Get all clickable elements
-      const clickableElements = await this.page.$$(CONFIG.CLICK.selector.join(', '));
-      log(`Found ${clickableElements.length} clickable elements`);
+      // Initialize clickable elements (from cache or query page)
+      const { clickableElements, cacheData } = await this.initializeClickableElements(originalUrl);
+      
+      // Log estimated time
+      this.logEstimatedTime(clickableElements.length);
       
       for (let i = 0; i < clickableElements.length; i++) {
         try {
           // Reload page before each click to ensure clean state
           if (i > 0) {
-            const refreshedElements = await this.refreshPage(originalUrl);
+            await this.refreshPage(originalUrl);
+            
+            // Re-find elements after refresh
+            const refreshedElements = await this.refreshElements(cacheData);
             if (i >= refreshedElements.length) {
               continue;
             }
